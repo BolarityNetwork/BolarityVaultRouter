@@ -334,7 +334,7 @@ describe("BolarityVault", function () {
       const strategyBalanceBefore = await mockToken.balanceOf(mockStrategy.target);
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
 
-      await vault.emergencyWithdraw(DEPOSIT_AMOUNT);
+      await vault["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT);
 
       const strategyBalanceAfter = await mockToken.balanceOf(mockStrategy.target);
       const vaultBalanceAfter = await mockToken.balanceOf(vault.target);
@@ -345,7 +345,7 @@ describe("BolarityVault", function () {
 
     it("Should revert if non-owner tries emergency withdraw", async function () {
       await expect(
-        vault.connect(user1).emergencyWithdraw(DEPOSIT_AMOUNT)
+        vault.connect(user1)["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT)
       ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
     });
   });

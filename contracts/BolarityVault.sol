@@ -23,6 +23,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     uint256 public constant PRECISION = 1e18;
 
     bool private _initialized;
+    
+    // Storage for name and symbol when using proxy pattern
+    string private _storedName;
+    string private _storedSymbol;
 
     // Events are inherited from IERC4626 (Deposit and Withdraw)
     // StrategyChanged and FeeCrystallized events are inherited from IBolarityVault
@@ -73,8 +77,28 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         feeCollector = feeCollector_;
         perfFeeBps = perfFeeBps_;
         
+        // Store name and symbol for proxy pattern
+        _storedName = name_;
+        _storedSymbol = symbol_;
+        
         _transferOwnership(msg.sender);
         _initialized = true;
+    }
+
+    // Override name to use stored value when initialized
+    function name() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
+        if (_initialized) {
+            return _storedName;
+        }
+        return super.name();
+    }
+    
+    // Override symbol to use stored value when initialized
+    function symbol() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
+        if (_initialized) {
+            return _storedSymbol;
+        }
+        return super.symbol();
     }
 
     function asset() public view override returns (address) {
@@ -139,6 +163,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(assets > 0, "BolarityVault: Zero assets");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
+        // Initialize lastP before first accrual
+        if (lastP == 0 && totalSupply() == 0) {
+            lastP = PRECISION;
+        }
+        
         _accruePerfFee(); // Accrue fees before calculating shares
         
         shares = previewDeposit(assets);
@@ -146,11 +175,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
-        
-        // Initialize lastP after first deposit
-        if (lastP == 0 && totalSupply() > 0) {
-            lastP = PRECISION;
-        }
         
         _afterDeposit(assets);
         
@@ -161,6 +185,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(shares > 0, "BolarityVault: Zero shares");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
+        // Initialize lastP before first accrual
+        if (lastP == 0 && totalSupply() == 0) {
+            lastP = PRECISION;
+        }
+        
         _accruePerfFee(); // Accrue fees before calculating assets
         
         assets = previewMint(shares);
@@ -168,11 +197,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
-        
-        // Initialize lastP after first deposit
-        if (lastP == 0 && totalSupply() > 0) {
-            lastP = PRECISION;
-        }
         
         _afterDeposit(assets);
         
@@ -252,13 +276,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         if (denominator == 0) return 0;
 
-        uint256 x = numerator / denominator;
+        feeShares = numerator / denominator;
         
-        if (x > 0) {
-            _mint(feeCollector, x);
-            lastP = (A * PRECISION) / (S + x);
-            emit FeeCrystallized(P0, P1, dP, perfFeeBps, x);
-            feeShares = x;
+        if (feeShares > 0) {
+            _mint(feeCollector, feeShares);
+            lastP = (A * PRECISION) / (S + feeShares);
+            emit FeeCrystallized(P0, P1, dP, perfFeeBps, feeShares);
         }
         
         return feeShares;

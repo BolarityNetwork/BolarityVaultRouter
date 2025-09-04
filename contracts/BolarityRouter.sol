@@ -99,9 +99,14 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
     ) external nonReentrant whenNotPaused returns (uint256 shares) {
         address vault = _getVault(asset, market);
         
-        // When the router calls withdraw on behalf of the owner,
-        // the vault will need approval from owner to router
-        shares = IBolarityVault(vault).withdraw(assets, receiver, owner);
+        // If owner != msg.sender, router needs approval from owner
+        // Otherwise, owner can withdraw their own shares directly
+        if (owner == msg.sender) {
+            shares = IBolarityVault(vault).withdraw(assets, receiver, msg.sender);
+        } else {
+            // This path requires the owner to have approved the router
+            shares = IBolarityVault(vault).withdraw(assets, receiver, owner);
+        }
         
         emit Withdrawn(asset, market, receiver, assets, shares);
     }
@@ -116,9 +121,14 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
     ) external nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
         
-        // When the router calls redeem on behalf of the owner,
-        // the vault will need approval from owner to router
-        assets = IBolarityVault(vault).redeem(shares, receiver, owner);
+        // If owner != msg.sender, router needs approval from owner
+        // Otherwise, owner can redeem their own shares directly
+        if (owner == msg.sender) {
+            assets = IBolarityVault(vault).redeem(shares, receiver, msg.sender);
+        } else {
+            // This path requires the owner to have approved the router
+            assets = IBolarityVault(vault).redeem(shares, receiver, owner);
+        }
         
         emit Redeemed(asset, market, receiver, shares, assets);
     }
@@ -152,7 +162,8 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         address[] calldata assets,
         bytes32[] calldata markets,
         uint256[] calldata amounts,
-        address receiver
+        address receiver,
+        address owner
     ) external nonReentrant whenNotPaused {
         require(
             assets.length == markets.length && assets.length == amounts.length,
@@ -162,7 +173,14 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         for (uint256 i = 0; i < assets.length; i++) {
             address vault = _getVault(assets[i], markets[i]);
             
-            uint256 shares = IBolarityVault(vault).withdraw(amounts[i], receiver, msg.sender);
+            uint256 shares;
+            // If owner == msg.sender, withdraw directly
+            // Otherwise requires approval
+            if (owner == msg.sender) {
+                shares = IBolarityVault(vault).withdraw(amounts[i], receiver, msg.sender);
+            } else {
+                shares = IBolarityVault(vault).withdraw(amounts[i], receiver, owner);
+            }
             
             emit Withdrawn(assets[i], markets[i], receiver, amounts[i], shares);
         }
