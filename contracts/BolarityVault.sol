@@ -55,6 +55,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             strategy = strategy_;
             feeCollector = feeCollector_;
             perfFeeBps = perfFeeBps_;
+            _storedName = name_;
+            _storedSymbol = symbol_;
             _initialized = true;
         }
     }

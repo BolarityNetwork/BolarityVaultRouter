@@ -425,7 +425,7 @@ describe("BolarityRouter", function () {
       const token1BalanceBefore = await token1.balanceOf(user.address);
       const token2BalanceBefore = await token2.balanceOf(user.address);
 
-      await router.connect(user).withdrawMultiple(assets, markets, amounts, user.address);
+      await router.connect(user).withdrawMultiple(assets, markets, amounts, user.address, user.address);
 
       const token1BalanceAfter = await token1.balanceOf(user.address);
       const token2BalanceAfter = await token2.balanceOf(user.address);
@@ -439,7 +439,7 @@ describe("BolarityRouter", function () {
       const markets = [MARKET_AAVE, MARKET_COMPOUND];
       const amounts = [ethers.parseEther("100"), ethers.parseEther("200")];
 
-      const tx = await router.connect(user).withdrawMultiple(assets, markets, amounts, user.address);
+      const tx = await router.connect(user).withdrawMultiple(assets, markets, amounts, user.address, user.address);
       const receipt = await tx.wait();
       
       const events = receipt?.logs.filter((log: any) => {

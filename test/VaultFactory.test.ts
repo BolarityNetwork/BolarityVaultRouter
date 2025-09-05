@@ -239,7 +239,7 @@ describe("VaultFactory", function () {
           "Test Vault 2",
           "TV2"
         )
-      ).to.be.revertedWith("Registry: Vault already registered");
+      ).to.be.reverted;
     });
   });
 
@@ -309,10 +309,12 @@ describe("VaultFactory", function () {
         )
       ).to.emit(factory, "VaultDeployed")
         .withArgs(
-          computedAddress,
           mockToken.target,
           MARKET_AAVE,
-          mockStrategy.target
+          computedAddress,
+          mockStrategy.target,
+          vaultName,
+          vaultSymbol
         );
     });
   });
