@@ -12,6 +12,7 @@ contract VaultFactory is Ownable {
 
     address public immutable vaultImplementation;
     IRegistry public immutable registry;
+    address public router;
 
     event VaultDeployed(
         address indexed asset,
@@ -21,6 +22,8 @@ contract VaultFactory is Ownable {
         string name,
         string symbol
     );
+    
+    event RouterUpdated(address indexed newRouter);
 
     constructor(address _registry) Ownable(msg.sender) {
         require(_registry != address(0), "VaultFactory: Invalid registry");
@@ -64,6 +67,11 @@ contract VaultFactory is Ownable {
             perfFeeBps
         );
         
+        // Set router if configured (before transferring ownership)
+        if (router != address(0)) {
+            BolarityVault(vault).setRouter(router);
+        }
+        
         BolarityVault(vault).transferOwnership(owner());
         
         registry.registerVault(asset, market, vault);
@@ -71,6 +79,12 @@ contract VaultFactory is Ownable {
         emit VaultDeployed(asset, market, vault, strategy, name, symbol);
     }
 
+    function setRouter(address _router) external onlyOwner {
+        require(_router != address(0), "VaultFactory: Invalid router");
+        router = _router;
+        emit RouterUpdated(_router);
+    }
+    
     function computeVaultAddress(address asset, bytes32 market) external view returns (address) {
         bytes32 salt = keccak256(abi.encodePacked(asset, market));
         return vaultImplementation.predictDeterministicAddress(salt, address(this));

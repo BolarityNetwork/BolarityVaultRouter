@@ -9,8 +9,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IRegistry.sol";
 import "./interfaces/IBolarityVault.sol";
 import "./interfaces/IVaultFactory.sol";
+import "./interfaces/IBolarityRouter.sol";
 
-contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
+contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
 
     IRegistry public immutable registry;
@@ -53,51 +54,45 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         factory = IVaultFactory(_factory);
     }
 
-    // Deposit to a specific vault
-    function depositToVault(
-        address asset,
-        bytes32 market,
-        uint256 assets,
-        address receiver
-    ) external nonReentrant whenNotPaused returns (uint256 shares) {
-        address vault = _getVault(asset, market);
-        
-        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
-        IERC20(asset).safeIncreaseAllowance(vault, assets);
-        
-        shares = IBolarityVault(vault).deposit(assets, receiver);
-        
-        emit Deposited(asset, market, receiver, assets, shares);
-    }
-
-    // Deposit to preferred vault
-    function depositToPreferredVault(
-        address asset,
-        uint256 assets,
-        address receiver
-    ) external nonReentrant whenNotPaused returns (uint256 shares) {
-        bytes32 market = registry.getPreferredMarket(asset);
-        require(market != bytes32(0), "BolarityRouter: No preferred market");
-        
-        address vault = _getVault(asset, market);
-        
-        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
-        IERC20(asset).safeIncreaseAllowance(vault, assets);
-        
-        shares = IBolarityVault(vault).deposit(assets, receiver);
-        
-        emit Deposited(asset, market, receiver, assets, shares);
-    }
-
-    // Withdraw from a specific vault
-    function withdrawFromVault(
+    // -------- Write (with data) --------
+    function deposit(
         address asset,
         bytes32 market,
         uint256 assets,
         address receiver,
-        address owner
-    ) external nonReentrant whenNotPaused returns (uint256 shares) {
+        bytes calldata data
+    ) external override nonReentrant whenNotPaused returns (uint256 shares) {
         address vault = _getVault(asset, market);
+        
+        // Set strategy call data if provided
+        if (data.length > 0) {
+            IBolarityVault(vault).setStrategyCallData(data);
+        }
+        
+        // Transfer tokens to router first, then approve vault
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+        IERC20(asset).safeIncreaseAllowance(vault, assets);
+        
+        // Call deposit on vault
+        shares = IBolarityVault(vault).deposit(assets, receiver);
+        
+        emit Deposited(asset, market, receiver, assets, shares);
+    }
+
+    function withdraw(
+        address asset,
+        bytes32 market,
+        uint256 assets,
+        address receiver,
+        address owner,
+        bytes calldata data
+    ) external override nonReentrant whenNotPaused returns (uint256 shares) {
+        address vault = _getVault(asset, market);
+        
+        // Set strategy call data if provided
+        if (data.length > 0) {
+            IBolarityVault(vault).setStrategyCallData(data);
+        }
         
         // If owner != msg.sender, router needs approval from owner
         // Otherwise, owner can withdraw their own shares directly
@@ -111,15 +106,49 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         emit Withdrawn(asset, market, receiver, assets, shares);
     }
 
-    // Redeem shares from a specific vault
-    function redeemFromVault(
+    function mint(
         address asset,
         bytes32 market,
         uint256 shares,
         address receiver,
-        address owner
-    ) external nonReentrant whenNotPaused returns (uint256 assets) {
+        bytes calldata data
+    ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
+        
+        // Set strategy call data if provided
+        if (data.length > 0) {
+            IBolarityVault(vault).setStrategyCallData(data);
+        }
+        
+        // Get required assets for shares
+        assets = IBolarityVault(vault).previewMint(shares);
+        
+        // Transfer tokens to router first, then approve vault
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+        IERC20(asset).safeIncreaseAllowance(vault, assets);
+        
+        // Call mint on vault
+        uint256 actualAssets = IBolarityVault(vault).mint(shares, receiver);
+        require(actualAssets <= assets, "BolarityRouter: Slippage");
+        
+        emit Deposited(asset, market, receiver, actualAssets, shares);
+        return actualAssets;
+    }
+
+    function redeem(
+        address asset,
+        bytes32 market,
+        uint256 shares,
+        address receiver,
+        address owner,
+        bytes calldata data
+    ) external override nonReentrant whenNotPaused returns (uint256 assets) {
+        address vault = _getVault(asset, market);
+        
+        // Set strategy call data if provided
+        if (data.length > 0) {
+            IBolarityVault(vault).setStrategyCallData(data);
+        }
         
         // If owner != msg.sender, router needs approval from owner
         // Otherwise, owner can redeem their own shares directly
@@ -133,7 +162,52 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         emit Redeemed(asset, market, receiver, shares, assets);
     }
 
-    // Batch deposit to multiple vaults
+    // -------- Read (unchanged) --------
+    function vaultFor(address asset, bytes32 market) external view override returns (address) {
+        return registry.getVault(asset, market);
+    }
+
+    function previewDeposit(
+        address asset,
+        bytes32 market,
+        uint256 assets
+    ) external view override returns (uint256 shares) {
+        address vault = registry.getVault(asset, market);
+        if (vault == address(0)) return 0;
+        return IBolarityVault(vault).previewDeposit(assets);
+    }
+
+    function previewWithdraw(
+        address asset,
+        bytes32 market,
+        uint256 assets
+    ) external view override returns (uint256 shares) {
+        address vault = registry.getVault(asset, market);
+        if (vault == address(0)) return 0;
+        return IBolarityVault(vault).previewWithdraw(assets);
+    }
+
+    function previewMint(
+        address asset,
+        bytes32 market,
+        uint256 shares
+    ) external view override returns (uint256 assets) {
+        address vault = registry.getVault(asset, market);
+        if (vault == address(0)) return 0;
+        return IBolarityVault(vault).previewMint(shares);
+    }
+
+    function previewRedeem(
+        address asset,
+        bytes32 market,
+        uint256 shares
+    ) external view override returns (uint256 assets) {
+        address vault = registry.getVault(asset, market);
+        if (vault == address(0)) return 0;
+        return IBolarityVault(vault).previewRedeem(shares);
+    }
+
+    // Admin functions for emergency and testing
     function depositMultiple(
         address[] calldata assets,
         bytes32[] calldata markets,
@@ -157,7 +231,6 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         }
     }
 
-    // Batch withdraw from multiple vaults
     function withdrawMultiple(
         address[] calldata assets,
         bytes32[] calldata markets,
@@ -186,7 +259,6 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         }
     }
 
-    // Emergency withdraw for owner
     function emergencyWithdrawAll(
         address asset,
         bytes32 market,
@@ -201,20 +273,6 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         }
     }
 
-    // Pause/unpause functions
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    // View functions
-    function getVault(address asset, bytes32 market) external view returns (address) {
-        return registry.getVault(asset, market);
-    }
-
     function getUserBalance(address asset, bytes32 market, address user) external view returns (uint256) {
         address vault = registry.getVault(asset, market);
         if (vault == address(0)) return 0;
@@ -227,44 +285,12 @@ contract BolarityRouter is ReentrancyGuard, Pausable, Ownable {
         return IBolarityVault(vault).totalAssets();
     }
 
-    function previewDeposit(
-        address asset,
-        bytes32 market,
-        uint256 assets
-    ) external view returns (uint256 shares) {
-        address vault = registry.getVault(asset, market);
-        if (vault == address(0)) return 0;
-        return IBolarityVault(vault).previewDeposit(assets);
+    function pause() external onlyOwner {
+        _pause();
     }
 
-    function previewWithdraw(
-        address asset,
-        bytes32 market,
-        uint256 assets
-    ) external view returns (uint256 shares) {
-        address vault = registry.getVault(asset, market);
-        if (vault == address(0)) return 0;
-        return IBolarityVault(vault).previewWithdraw(assets);
-    }
-
-    function previewMint(
-        address asset,
-        bytes32 market,
-        uint256 shares
-    ) external view returns (uint256 assets) {
-        address vault = registry.getVault(asset, market);
-        if (vault == address(0)) return 0;
-        return IBolarityVault(vault).previewMint(shares);
-    }
-
-    function previewRedeem(
-        address asset,
-        bytes32 market,
-        uint256 shares
-    ) external view returns (uint256 assets) {
-        address vault = registry.getVault(asset, market);
-        if (vault == address(0)) return 0;
-        return IBolarityVault(vault).previewRedeem(shares);
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     // Internal functions

@@ -166,27 +166,30 @@ describe("Vault System Integration", function () {
 
     it("Should handle multiple users depositing to different vaults", async function () {
       // Alice deposits to AAVE vault
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       // Bob deposits to Compound vault
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_COMPOUND,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       // Charlie deposits to Uniswap vault
-      await router.connect(charlie).depositToVault(
+      await router.connect(charlie).deposit(
         usdc.target,
         MARKET_UNISWAP,
         CHARLIE_DEPOSIT,
-        charlie.address
+        charlie.address,
+        "0x"
       );
 
       // Verify balances
@@ -200,52 +203,43 @@ describe("Vault System Integration", function () {
       expect(await vaultUniswap.totalAssets()).to.equal(CHARLIE_DEPOSIT);
     });
 
-    it("Should handle deposit to preferred vault correctly", async function () {
-      // Alice uses preferred vault (should go to AAVE)
-      await router.connect(alice).depositToPreferredVault(
-        usdc.target,
-        ALICE_DEPOSIT,
-        alice.address
-      );
-
-      expect(await vaultAAVE.balanceOf(alice.address)).to.be.greaterThan(0);
-      expect(await vaultCompound.balanceOf(alice.address)).to.equal(0);
-      expect(await vaultUniswap.balanceOf(alice.address)).to.equal(0);
-    });
-
     it("Should handle multiple deposits and withdrawals", async function () {
       // Initial deposits
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_AAVE,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       // Partial withdrawal by Alice
       const aliceWithdrawAmount = ethers.parseEther("5000");
       await vaultAAVE.connect(alice).approve(router.target, ethers.MaxUint256);
-      await router.connect(alice).withdrawFromVault(
+      await router.connect(alice).withdraw(
         usdc.target,
         MARKET_AAVE,
         aliceWithdrawAmount,
         alice.address,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       // Charlie deposits
-      await router.connect(charlie).depositToVault(
+      await router.connect(charlie).deposit(
         usdc.target,
         MARKET_AAVE,
         CHARLIE_DEPOSIT,
-        charlie.address
+        charlie.address,
+        "0x"
       );
 
       // Verify total assets
@@ -255,11 +249,12 @@ describe("Vault System Integration", function () {
 
     it("Should properly distribute performance fees", async function () {
       // Users deposit
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       const aliceShares = await vaultAAVE.balanceOf(alice.address);
@@ -269,11 +264,12 @@ describe("Vault System Integration", function () {
       await usdc.mint(strategyAAVE.target, profit);
 
       // Bob deposits (this should trigger fee crystallization)
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_AAVE,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       // Check fee collector received shares
@@ -360,18 +356,20 @@ describe("Vault System Integration", function () {
 
     it("Should handle strategy migration correctly", async function () {
       // Users deposit
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_AAVE,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       const totalAssetsBefore = await vaultAAVE.totalAssets();
@@ -390,12 +388,13 @@ describe("Vault System Integration", function () {
 
       // Users should still be able to withdraw
       await vaultAAVE.connect(alice).approve(router.target, ethers.MaxUint256);
-      await router.connect(alice).withdrawFromVault(
+      await router.connect(alice).withdraw(
         usdc.target,
         MARKET_AAVE,
         ethers.parseEther("1000"),
         alice.address,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       expect(await usdc.balanceOf(alice.address)).to.be.greaterThan(INITIAL_BALANCE - ALICE_DEPOSIT);
@@ -403,18 +402,20 @@ describe("Vault System Integration", function () {
 
     it("Should handle emergency scenarios", async function () {
       // Users deposit
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_COMPOUND,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       // Pause a vault
@@ -422,11 +423,12 @@ describe("Vault System Integration", function () {
 
       // Alice cannot deposit or withdraw from paused vault
       await expect(
-        router.connect(alice).depositToVault(
+        router.connect(alice).deposit(
           usdc.target,
           MARKET_AAVE,
           ethers.parseEther("1000"),
-          alice.address
+          alice.address,
+          "0x"
         )
       ).to.be.reverted;
 
@@ -435,21 +437,23 @@ describe("Vault System Integration", function () {
 
       // Now Alice can withdraw
       await vaultAAVE.connect(alice).approve(router.target, ethers.MaxUint256);
-      await router.connect(alice).withdrawFromVault(
+      await router.connect(alice).withdraw(
         usdc.target,
         MARKET_AAVE,
         ethers.parseEther("1000"),
         alice.address,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       // Simulate stuck funds in router by transferring some shares
       // First, Alice gets some shares
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ethers.parseEther("2000"),
-        alice.address
+        alice.address,
+        "0x"
       );
       
       // Transfer shares to router to simulate stuck funds
@@ -482,11 +486,12 @@ describe("Vault System Integration", function () {
 
     it("Should correctly calculate share prices with profits", async function () {
       // Initial deposit
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ALICE_DEPOSIT,
-        alice.address
+        alice.address,
+        "0x"
       );
 
       const aliceSharesInitial = await vaultAAVE.balanceOf(alice.address);
@@ -497,11 +502,12 @@ describe("Vault System Integration", function () {
       await usdc.mint(strategyAAVE.target, profit);
 
       // Bob deposits after profit
-      await router.connect(bob).depositToVault(
+      await router.connect(bob).deposit(
         usdc.target,
         MARKET_AAVE,
         BOB_DEPOSIT,
-        bob.address
+        bob.address,
+        "0x"
       );
 
       const bobShares = await vaultAAVE.balanceOf(bob.address);
@@ -522,18 +528,20 @@ describe("Vault System Integration", function () {
 
     it("Should handle cross-asset operations", async function () {
       // Alice deposits both USDC and DAI
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ethers.parseEther("5000"),
-        alice.address
+        alice.address,
+        "0x"
       );
 
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         dai.target,
         MARKET_AAVE,
         ethers.parseEther("3000"),
-        alice.address
+        alice.address,
+        "0x"
       );
 
       // Check both vaults
@@ -586,21 +594,23 @@ describe("Vault System Integration", function () {
 
     it("Should handle zero amount deposits gracefully", async function () {
       await expect(
-        router.connect(alice).depositToVault(
+        router.connect(alice).deposit(
           usdc.target,
           MARKET_AAVE,
           0,
-          alice.address
+          alice.address,
+          "0x"
         )
       ).to.be.reverted;
     });
 
     it("Should handle insufficient balance withdrawals", async function () {
-      await router.connect(alice).depositToVault(
+      await router.connect(alice).deposit(
         usdc.target,
         MARKET_AAVE,
         ethers.parseEther("1000"),
-        alice.address
+        alice.address,
+        "0x"
       );
 
       // Get vault and approve router
@@ -611,12 +621,13 @@ describe("Vault System Integration", function () {
       await vault.connect(alice).approve(router.target, ethers.MaxUint256);
 
       await expect(
-        router.connect(alice).withdrawFromVault(
+        router.connect(alice).withdraw(
           usdc.target,
           MARKET_AAVE,
           ethers.parseEther("2000"),
           alice.address,
-          alice.address
+          alice.address,
+          "0x"
         )
       ).to.be.reverted;
     });
@@ -625,11 +636,12 @@ describe("Vault System Integration", function () {
       const INVALID_MARKET = ethers.encodeBytes32String("INVALID");
       
       await expect(
-        router.connect(alice).depositToVault(
+        router.connect(alice).deposit(
           usdc.target,
           INVALID_MARKET,
           ethers.parseEther("1000"),
-          alice.address
+          alice.address,
+          "0x"
         )
       ).to.be.revertedWith("BolarityRouter: Vault not found");
     });

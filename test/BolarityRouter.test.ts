@@ -55,6 +55,9 @@ describe("BolarityRouter", function () {
       await factory.getAddress()
     );
     await router.waitForDeployment();
+    
+    // Set router on factory
+    await factory.setRouter(await router.getAddress());
 
     // Deploy Mock Tokens
     const MockERC20 = await ethers.getContractFactory("MockERC20");
@@ -137,15 +140,16 @@ describe("BolarityRouter", function () {
     });
   });
 
-  describe("depositToVault", function () {
+  describe("deposit", function () {
     it("Should deposit to specific vault", async function () {
       const sharesBefore = await vault1.balanceOf(user.address);
       
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x" // empty data
       );
 
       const sharesAfter = await vault1.balanceOf(user.address);
@@ -155,11 +159,12 @@ describe("BolarityRouter", function () {
     it("Should transfer tokens from user to vault", async function () {
       const userBalanceBefore = await token1.balanceOf(user.address);
       
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
 
       const userBalanceAfter = await token1.balanceOf(user.address);
@@ -168,11 +173,12 @@ describe("BolarityRouter", function () {
 
     it("Should emit Deposited event", async function () {
       await expect(
-        router.connect(user).depositToVault(
+        router.connect(user).deposit(
           token1.target,
           MARKET_AAVE,
           DEPOSIT_AMOUNT,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.emit(router, "Deposited");
     });
@@ -181,21 +187,23 @@ describe("BolarityRouter", function () {
       const MARKET_UNISWAP = ethers.encodeBytes32String("UNISWAP");
       
       await expect(
-        router.connect(user).depositToVault(
+        router.connect(user).deposit(
           token1.target,
           MARKET_UNISWAP,
           DEPOSIT_AMOUNT,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.be.revertedWith("BolarityRouter: Vault not found");
     });
 
     it("Should handle deposits to different receiver", async function () {
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        treasury.address
+        treasury.address,
+        "0x"
       );
 
       expect(await vault1.balanceOf(treasury.address)).to.be.greaterThan(0);
@@ -203,53 +211,15 @@ describe("BolarityRouter", function () {
     });
   });
 
-  describe("depositToPreferredVault", function () {
-    beforeEach(async function () {
-      // Set preferred market for token1
-      await factory.recoverRegistryOwnership();
-      await registry.setPreferredMarket(token1.target, MARKET_AAVE);
-      await registry.transferOwnership(await factory.getAddress());
-    });
-
-    it("Should deposit to preferred vault", async function () {
-      await router.connect(user).depositToPreferredVault(
-        token1.target,
-        DEPOSIT_AMOUNT,
-        user.address
-      );
-
-      expect(await vault1.balanceOf(user.address)).to.be.greaterThan(0);
-    });
-
-    it("Should revert if no preferred market set", async function () {
-      await expect(
-        router.connect(user).depositToPreferredVault(
-          token2.target,
-          DEPOSIT_AMOUNT,
-          user.address
-        )
-      ).to.be.revertedWith("BolarityRouter: No preferred market");
-    });
-
-    it("Should emit Deposited event with preferred market", async function () {
-      await expect(
-        router.connect(user).depositToPreferredVault(
-          token1.target,
-          DEPOSIT_AMOUNT,
-          user.address
-        )
-      ).to.emit(router, "Deposited");
-    });
-  });
-
-  describe("withdrawFromVault", function () {
+  describe("withdraw", function () {
     beforeEach(async function () {
       // Deposit first
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
       
       // Approve router to withdraw vault shares on behalf of user
@@ -261,12 +231,13 @@ describe("BolarityRouter", function () {
       const tokenBalanceBefore = await token1.balanceOf(user.address);
       
       const withdrawAmount = ethers.parseEther("500");
-      await router.connect(user).withdrawFromVault(
+      await router.connect(user).withdraw(
         token1.target,
         MARKET_AAVE,
         withdrawAmount,
         user.address,
-        user.address
+        user.address,
+        "0x"
       );
 
       const sharesAfter = await vault1.balanceOf(user.address);
@@ -280,12 +251,13 @@ describe("BolarityRouter", function () {
       const withdrawAmount = ethers.parseEther("500");
       
       await expect(
-        router.connect(user).withdrawFromVault(
+        router.connect(user).withdraw(
           token1.target,
           MARKET_AAVE,
           withdrawAmount,
           user.address,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.emit(router, "Withdrawn");
     });
@@ -294,27 +266,29 @@ describe("BolarityRouter", function () {
       const MARKET_UNISWAP = ethers.encodeBytes32String("UNISWAP");
       
       await expect(
-        router.connect(user).withdrawFromVault(
+        router.connect(user).withdraw(
           token1.target,
           MARKET_UNISWAP,
           ethers.parseEther("500"),
           user.address,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.be.revertedWith("BolarityRouter: Vault not found");
     });
   });
 
-  describe("redeemFromVault", function () {
+  describe("redeem", function () {
     let userShares: bigint;
 
     beforeEach(async function () {
       // Deposit first
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
       userShares = await vault1.balanceOf(user.address);
       
@@ -325,12 +299,13 @@ describe("BolarityRouter", function () {
     it("Should redeem shares from specific vault", async function () {
       const tokenBalanceBefore = await token1.balanceOf(user.address);
       
-      await router.connect(user).redeemFromVault(
+      await router.connect(user).redeem(
         token1.target,
         MARKET_AAVE,
         userShares,
         user.address,
-        user.address
+        user.address,
+        "0x"
       );
 
       const sharesAfter = await vault1.balanceOf(user.address);
@@ -342,12 +317,13 @@ describe("BolarityRouter", function () {
 
     it("Should emit Redeemed event", async function () {
       await expect(
-        router.connect(user).redeemFromVault(
+        router.connect(user).redeem(
           token1.target,
           MARKET_AAVE,
           userShares,
           user.address,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.emit(router, "Redeemed");
     });
@@ -399,17 +375,19 @@ describe("BolarityRouter", function () {
   describe("withdrawMultiple", function () {
     beforeEach(async function () {
       // Deposit to both vaults first
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token2.target,
         MARKET_COMPOUND,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
       
       // Approve router to withdraw vault shares on behalf of user
@@ -458,11 +436,12 @@ describe("BolarityRouter", function () {
   describe("emergencyWithdrawAll", function () {
     beforeEach(async function () {
       // Deposit as user first, then transfer shares to router (simulate stuck funds)
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
       // Transfer shares to router to simulate stuck funds
       const shares = await vault1.balanceOf(user.address);
@@ -498,16 +477,17 @@ describe("BolarityRouter", function () {
 
   describe("View Functions", function () {
     beforeEach(async function () {
-      await router.connect(user).depositToVault(
+      await router.connect(user).deposit(
         token1.target,
         MARKET_AAVE,
         DEPOSIT_AMOUNT,
-        user.address
+        user.address,
+        "0x"
       );
     });
 
-    it("Should get vault address", async function () {
-      const vaultAddress = await router.getVault(token1.target, MARKET_AAVE);
+    it("Should get vault address using vaultFor", async function () {
+      const vaultAddress = await router.vaultFor(token1.target, MARKET_AAVE);
       expect(vaultAddress).to.equal(vault1.target);
     });
 
@@ -563,11 +543,12 @@ describe("BolarityRouter", function () {
       await router.pause();
       
       await expect(
-        router.connect(user).depositToVault(
+        router.connect(user).deposit(
           token1.target,
           MARKET_AAVE,
           DEPOSIT_AMOUNT,
-          user.address
+          user.address,
+          "0x"
         )
       ).to.be.revertedWithCustomError(router, "EnforcedPause");
     });
