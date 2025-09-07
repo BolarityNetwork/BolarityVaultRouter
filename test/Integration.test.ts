@@ -73,16 +73,16 @@ describe("Vault System Integration", function () {
 
     // Deploy strategies
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    strategyAAVE = await MockStrategy.deploy(usdc.target);
+    strategyAAVE = await MockStrategy.deploy();
     await strategyAAVE.waitForDeployment();
     
-    strategyCompound = await MockStrategy.deploy(usdc.target);
+    strategyCompound = await MockStrategy.deploy();
     await strategyCompound.waitForDeployment();
     
-    strategyUniswap = await MockStrategy.deploy(usdc.target);
+    strategyUniswap = await MockStrategy.deploy();
     await strategyUniswap.waitForDeployment();
     
-    strategyDAI = await MockStrategy.deploy(dai.target);
+    strategyDAI = await MockStrategy.deploy();
     await strategyDAI.waitForDeployment();
 
     // Create vaults for USDC across different markets
@@ -261,7 +261,7 @@ describe("Vault System Integration", function () {
 
       // Simulate profit by adding tokens to strategy
       const profit = ethers.parseEther("1000");
-      await usdc.mint(strategyAAVE.target, profit);
+      await usdc.mint(vaultAAVE.target, profit);
 
       // Bob deposits (this should trigger fee crystallization)
       await router.connect(bob).deposit(
@@ -376,14 +376,14 @@ describe("Vault System Integration", function () {
 
       // Deploy new strategy
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy(usdc.target);
+      const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
       // Migrate strategy
       await vaultAAVE.setStrategy(newStrategy.target);
 
-      // Verify funds were migrated
-      expect(await usdc.balanceOf(newStrategy.target)).to.equal(totalAssetsBefore);
+      // Verify funds remain in vault (delegatecall pattern)
+      expect(await usdc.balanceOf(vaultAAVE.target)).to.equal(totalAssetsBefore);
       expect(await vaultAAVE.totalAssets()).to.equal(totalAssetsBefore);
 
       // Users should still be able to withdraw
@@ -499,7 +499,7 @@ describe("Vault System Integration", function () {
 
       // Simulate 20% profit
       const profit = ALICE_DEPOSIT * 20n / 100n;
-      await usdc.mint(strategyAAVE.target, profit);
+      await usdc.mint(vaultAAVE.target, profit);
 
       // Bob deposits after profit
       await router.connect(bob).deposit(
@@ -664,7 +664,7 @@ describe("Vault System Integration", function () {
       // Create vault with maximum fee (30%)
       const maxFeeBps = 3000;
       const newToken = await ethers.deployContract("MockERC20", ["Test", "TEST", 18]);
-      const newStrategy = await ethers.deployContract("MockStrategy", [newToken.target]);
+      const newStrategy = await ethers.deployContract("MockStrategy");
 
       await factory.createVault(
         newToken.target,

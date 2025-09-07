@@ -121,22 +121,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 idle = _asset.balanceOf(address(this));
         uint256 invested = 0;
         if (strategy != address(0)) {
-            // Try the new totalUnderlying(vault) method first
+            // Call totalUnderlying(vault) on strategy
             (bool success, bytes memory data) = strategy.staticcall(
                 abi.encodeWithSignature("totalUnderlying(address)", address(this))
             );
             if (success && data.length >= 32) {
                 invested = abi.decode(data, (uint256));
-            }
-            
-            // If that returns 0 or fails, try the old totalUnderlying() for compatibility
-            if (invested == 0) {
-                (success, data) = strategy.staticcall(
-                    abi.encodeWithSignature("totalUnderlying()")
-                );
-                if (success && data.length >= 32) {
-                    invested = abi.decode(data, (uint256));
-                }
             }
         }
         return idle + invested;
@@ -342,49 +332,30 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             // Get and consume strategy data
             bytes memory data = _consumeStrategyCallData();
             
-            // Try delegatecall first for new strategies
+            // Execute strategy via delegatecall
             (bool success, bytes memory returnData) = strategy.delegatecall(
                 abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, data)
             );
             
-            bool delegateWorked = false;
-            if (success && returnData.length >= 64) {
-                // Decode return values from delegatecall
-                (uint256 accounted, uint256 entryGain) = abi.decode(returnData, (uint256, uint256));
-                
-                // Only consider delegatecall successful if it returned meaningful values
-                // For MockStrategy, accounted should be > 0 if it actually worked
-                if (accounted > 0) {
-                    delegateWorked = true;
-                    
-                    // Handle entry gain fee if any
-                    if (entryGain > 0 && perfFeeBps > 0) {
-                        uint256 feeAssetsOnEntry = (entryGain * perfFeeBps) / BPS_DIVISOR;
-                        uint256 S0 = totalSupply();
-                        uint256 A0 = totalAssets();
-                        
-                        if (S0 > 0 && feeAssetsOnEntry > 0) {
-                            uint256 feeShares = (feeAssetsOnEntry * S0) / A0;
-                            if (feeShares > 0) {
-                                _mint(feeCollector, feeShares);
-                                // Update lastP to avoid double-charging
-                                lastP = (totalAssets() * PRECISION) / totalSupply();
-                            }
-                        }
-                    }
-                }
-            }
+            require(success, "BolarityVault: Strategy invest failed");
+            require(returnData.length >= 64, "BolarityVault: Invalid return data");
             
-            // If delegatecall didn't work, use regular invest (for mock strategy)
-            // This transfers funds to the strategy
-            if (!delegateWorked) {
-                // Approve strategy to spend tokens
-                _asset.safeIncreaseAllowance(strategy, toInvest);
+            // Decode return values from delegatecall
+            (uint256 accounted, uint256 entryGain) = abi.decode(returnData, (uint256, uint256));
+            
+            // Handle entry gain fee if any
+            if (entryGain > 0 && perfFeeBps > 0) {
+                uint256 feeAssetsOnEntry = (entryGain * perfFeeBps) / BPS_DIVISOR;
+                uint256 S0 = totalSupply();
+                uint256 A0 = totalAssets();
                 
-                try IStrategy(strategy).invest(toInvest) {
-                    // Successfully invested
-                } catch {
-                    // If invest fails, tokens remain in vault
+                if (S0 > 0 && feeAssetsOnEntry > 0) {
+                    uint256 feeShares = (feeAssetsOnEntry * S0) / A0;
+                    if (feeShares > 0) {
+                        _mint(feeCollector, feeShares);
+                        // Update lastP to avoid double-charging
+                        lastP = (totalAssets() * PRECISION) / totalSupply();
+                    }
                 }
             }
             
@@ -403,26 +374,30 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             // Get and consume strategy data
             bytes memory data = _consumeStrategyCallData();
             
-            // Try delegatecall first for new strategies
+            // Execute strategy via delegatecall
             (bool success, bytes memory returnData) = strategy.delegatecall(
                 abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, data)
             );
             
-            bool delegateWorked = false;
-            if (success && returnData.length >= 64) {
-                (uint256 accountedOut, ) = abi.decode(returnData, (uint256, uint256));
-                if (accountedOut > 0) {
-                    delegateWorked = true;
-                }
-            }
+            require(success, "BolarityVault: Strategy divest failed");
+            require(returnData.length >= 64, "BolarityVault: Invalid return data");
             
-            // If delegatecall doesn't work or strategy doesn't support it, use regular divest
-            if (!delegateWorked) {
-                try IStrategy(strategy).divest(toWithdraw) {
-                    // Successfully divested
-                } catch {
-                    // If divest fails, we might not have enough in strategy
-                    // This is OK for mock testing
+            // Decode return values (accountedOut, exitGain)
+            (uint256 accountedOut, uint256 exitGain) = abi.decode(returnData, (uint256, uint256));
+            
+            // Handle exit gain fee if any
+            if (exitGain > 0 && perfFeeBps > 0) {
+                uint256 feeAssetsOnExit = (exitGain * perfFeeBps) / BPS_DIVISOR;
+                uint256 S0 = totalSupply();
+                uint256 A0 = totalAssets();
+                
+                if (S0 > 0 && feeAssetsOnExit > 0) {
+                    uint256 feeShares = (feeAssetsOnExit * S0) / A0;
+                    if (feeShares > 0) {
+                        _mint(feeCollector, feeShares);
+                        // Update lastP to avoid double-charging
+                        lastP = (totalAssets() * PRECISION) / totalSupply();
+                    }
                 }
             }
             
@@ -436,37 +411,38 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         address oldStrategy = strategy;
         
+        // Withdraw all funds from old strategy if exists
         if (oldStrategy != address(0)) {
-            // Try the new totalUnderlying(vault) method first
+            // Get total invested amount
             (bool success, bytes memory data) = oldStrategy.staticcall(
                 abi.encodeWithSignature("totalUnderlying(address)", address(this))
             );
-            uint256 invested = 0;
+            
             if (success && data.length >= 32) {
-                invested = abi.decode(data, (uint256));
-            }
-            
-            // If that returns 0 or fails, try the old totalUnderlying()
-            if (invested == 0) {
-                (success, data) = oldStrategy.staticcall(
-                    abi.encodeWithSignature("totalUnderlying()")
-                );
-                if (success && data.length >= 32) {
-                    invested = abi.decode(data, (uint256));
+                uint256 invested = abi.decode(data, (uint256));
+                
+                if (invested > 0) {
+                    // Divest all funds via delegatecall
+                    bytes memory emptyData;
+                    (success, ) = oldStrategy.delegatecall(
+                        abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), invested, emptyData)
+                    );
+                    // If divest fails, we continue anyway - funds might be stuck but we need to allow strategy change
                 }
-            }
-            
-            if (invested > 0) {
-                IStrategy(oldStrategy).divest(invested);
             }
         }
         
+        // Set new strategy
         strategy = newStrategy;
         
+        // Invest idle funds into new strategy
         uint256 idle = _asset.balanceOf(address(this));
         if (idle > 0) {
-            _asset.safeIncreaseAllowance(newStrategy, idle);
-            IStrategy(newStrategy).invest(idle);
+            bytes memory emptyData;
+            (bool success, ) = newStrategy.delegatecall(
+                abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), idle, emptyData)
+            );
+            // If invest fails, funds remain idle in vault
         }
         
         emit StrategyChanged(oldStrategy, newStrategy);
@@ -474,34 +450,32 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
 
     function emergencyWithdraw() external onlyOwner {
         if (strategy != address(0)) {
-            // Try the new totalUnderlying(vault) method first
+            // Get total invested amount
             (bool success, bytes memory data) = strategy.staticcall(
                 abi.encodeWithSignature("totalUnderlying(address)", address(this))
             );
-            uint256 invested = 0;
+            
             if (success && data.length >= 32) {
-                invested = abi.decode(data, (uint256));
-            }
-            
-            // If that returns 0 or fails, try the old totalUnderlying()
-            if (invested == 0) {
-                (success, data) = strategy.staticcall(
-                    abi.encodeWithSignature("totalUnderlying()")
-                );
-                if (success && data.length >= 32) {
-                    invested = abi.decode(data, (uint256));
+                uint256 invested = abi.decode(data, (uint256));
+                
+                if (invested > 0) {
+                    // Emergency withdraw via delegatecall
+                    bytes memory emptyData;
+                    strategy.delegatecall(
+                        abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, emptyData)
+                    );
                 }
-            }
-            
-            if (invested > 0) {
-                IStrategy(strategy).emergencyWithdraw(invested);
             }
         }
     }
 
     function emergencyWithdraw(uint256 amount) external override onlyOwner {
         if (strategy != address(0) && amount > 0) {
-            IStrategy(strategy).emergencyWithdraw(amount);
+            // Emergency withdraw specific amount via delegatecall
+            bytes memory emptyData;
+            strategy.delegatecall(
+                abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), amount, emptyData)
+            );
         }
     }
 

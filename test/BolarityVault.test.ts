@@ -27,7 +27,7 @@ describe("BolarityVault", function () {
 
     // Deploy Mock Strategy
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    mockStrategy = await MockStrategy.deploy(mockToken.target);
+    mockStrategy = await MockStrategy.deploy();
     await mockStrategy.waitForDeployment();
 
     // Deploy BolarityVault
@@ -97,15 +97,6 @@ describe("BolarityVault", function () {
       expect(await vault.balanceOf(user1.address)).to.equal(DEPOSIT_AMOUNT);
       expect(await vault.balanceOf(user2.address)).to.equal(DEPOSIT_AMOUNT);
       expect(await vault.totalSupply()).to.equal(DEPOSIT_AMOUNT * 2n);
-    });
-
-    it("Should invest funds in strategy", async function () {
-      const strategyBalanceBefore = await mockToken.balanceOf(mockStrategy.target);
-      
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
-      
-      const strategyBalanceAfter = await mockToken.balanceOf(mockStrategy.target);
-      expect(strategyBalanceAfter - strategyBalanceBefore).to.equal(DEPOSIT_AMOUNT);
     });
 
     it("Should revert when paused", async function () {
@@ -206,8 +197,8 @@ describe("BolarityVault", function () {
       // User deposits
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
-      // Simulate profit by sending tokens to strategy
-      await mockToken.mint(mockStrategy.target, ethers.parseEther("100"));
+      // Simulate profit by sending tokens to vault (not strategy, as strategy uses delegatecall)
+      await mockToken.mint(vault.target, ethers.parseEther("100"));
 
       // Another deposit should trigger fee accrual
       await vault.connect(user2).deposit(DEPOSIT_AMOUNT, user2.address);
@@ -219,7 +210,7 @@ describe("BolarityVault", function () {
 
     it("Should emit FeeCrystallized event", async function () {
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
-      await mockToken.mint(mockStrategy.target, ethers.parseEther("100"));
+      await mockToken.mint(vault.target, ethers.parseEther("100"));
 
       await expect(vault.connect(user2).deposit(DEPOSIT_AMOUNT, user2.address))
         .to.emit(vault, "FeeCrystallized");
@@ -239,7 +230,7 @@ describe("BolarityVault", function () {
   describe("Strategy Management", function () {
     it("Should allow owner to change strategy", async function () {
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy(mockToken.target);
+      const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
       await expect(vault.setStrategy(newStrategy.target))
@@ -253,13 +244,14 @@ describe("BolarityVault", function () {
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy(mockToken.target);
+      const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
+      const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
       await vault.setStrategy(newStrategy.target);
 
-      // Verify funds were migrated
-      expect(await mockToken.balanceOf(newStrategy.target)).to.equal(DEPOSIT_AMOUNT);
+      // Verify funds remain in vault (since strategies use delegatecall)
+      expect(await mockToken.balanceOf(vault.target)).to.equal(vaultBalanceBefore);
     });
 
     it("Should revert if non-owner tries to change strategy", async function () {
@@ -331,16 +323,16 @@ describe("BolarityVault", function () {
     it("Should allow owner to emergency withdraw", async function () {
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
-      const strategyBalanceBefore = await mockToken.balanceOf(mockStrategy.target);
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
 
+      // Emergency withdraw doesn't change vault balance since funds are already in vault
+      // It just updates internal accounting
       await vault["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT);
 
-      const strategyBalanceAfter = await mockToken.balanceOf(mockStrategy.target);
       const vaultBalanceAfter = await mockToken.balanceOf(vault.target);
 
-      expect(strategyBalanceBefore - strategyBalanceAfter).to.equal(DEPOSIT_AMOUNT);
-      expect(vaultBalanceAfter - vaultBalanceBefore).to.equal(DEPOSIT_AMOUNT);
+      // Funds remain in vault (delegatecall pattern)
+      expect(vaultBalanceAfter).to.equal(vaultBalanceBefore);
     });
 
     it("Should revert if non-owner tries emergency withdraw", async function () {

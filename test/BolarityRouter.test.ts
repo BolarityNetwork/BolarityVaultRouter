@@ -69,10 +69,10 @@ describe("BolarityRouter", function () {
 
     // Deploy Mock Strategies
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    strategy1 = await MockStrategy.deploy(token1.target);
+    strategy1 = await MockStrategy.deploy();
     await strategy1.waitForDeployment();
     
-    strategy2 = await MockStrategy.deploy(token2.target);
+    strategy2 = await MockStrategy.deploy();
     await strategy2.waitForDeployment();
 
     // Create vaults through factory

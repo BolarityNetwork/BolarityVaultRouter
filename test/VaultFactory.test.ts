@@ -32,7 +32,7 @@ describe("VaultFactory", function () {
 
     // Deploy mock strategy
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    mockStrategy = await MockStrategy.deploy(mockToken.target);
+    mockStrategy = await MockStrategy.deploy();
     await mockStrategy.waitForDeployment();
 
     // Deploy Registry

@@ -5,92 +5,88 @@ import "../interfaces/IStrategy.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+/**
+ * @title MockStrategy
+ * @notice Mock strategy for testing purposes (stateless, delegatecall compatible)
+ * @dev This contract simulates a yield strategy for testing
+ * Since this is called via delegatecall, it doesn't maintain state - it simulates behavior
+ */
 contract MockStrategy is IStrategy {
     using SafeERC20 for IERC20;
-
-    address public immutable asset;
-    uint256 public lastHarvestTime;
-
-    constructor(address _asset) {
-        asset = _asset;
-    }
-
-    function underlying() external view override returns (address) {
-        return asset;
-    }
-
-    function totalUnderlying() external view override returns (uint256) {
-        return IERC20(asset).balanceOf(address(this));
-    }
     
-    // Overloaded version with vault parameter for delegatecall
-    function totalUnderlying(address vault) external view override returns (uint256) {
-        // In delegatecall context, 'this' will be the vault
-        // For mock, just return 0 since we're not actually investing
-        // In a real strategy, this would return the invested amount
-        return 0;
-    }
-
-    function invest(uint256 amount) external override {
-        IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
-    }
-
-    function divest(uint256 amount) external override {
-        uint256 balance = IERC20(asset).balanceOf(address(this));
-        require(amount <= balance, "MockStrategy: Insufficient balance");
-        IERC20(asset).safeTransfer(msg.sender, amount);
-    }
-
-    function emergencyWithdraw(uint256 amount) external override {
-        uint256 balance = IERC20(asset).balanceOf(address(this));
-        require(amount <= balance, "MockStrategy: Insufficient balance");
-        IERC20(asset).safeTransfer(msg.sender, amount);
-    }
+    // Simulate a 10% yield
+    uint256 public constant YIELD_BPS = 1000; // 10%
+    uint256 public constant BPS_DIVISOR = 10000;
     
-    // Delegatecall interface for invest - returns (accounted, entryGain)
+    /**
+     * @notice Invest assets (delegatecall from vault)
+     * @param amountIn The amount to invest
+     * @return accounted The amount accounted for
+     * @return entryGain Simulated entry gain for testing
+     */
     function investDelegate(
-        address, // asset parameter (unused in mock)
+        address /* asset */,
         uint256 amountIn,
-        bytes calldata // data parameter (unused in mock)
+        bytes calldata /* data */
     ) external pure override returns (uint256 accounted, uint256 entryGain) {
-        // For mock strategy in delegatecall mode, return 0 to force fallback to regular invest
-        // This ensures tokens are actually moved to the strategy for testing
-        accounted = 0;
+        // In delegatecall context, this = vault
+        // For mock strategy, we don't simulate any entry gain for testing simplicity
+        // In real implementation, this would interact with a protocol
+        
+        // No entry gain for testing
         entryGain = 0;
+        accounted = amountIn;
+        
+        return (accounted, entryGain);
     }
-    
-    // Delegatecall interface for divest - returns (accountedOut, exitGain)
+
+    /**
+     * @notice Withdraw assets (delegatecall from vault)
+     * @param amountOut The amount to withdraw
+     * @return accountedOut The amount withdrawn
+     * @return exitGain No exit gain for mock
+     */
     function divestDelegate(
-        address, // asset parameter (unused in mock)
+        address /* asset */,
         uint256 amountOut,
-        bytes calldata // data parameter (unused in mock)
+        bytes calldata /* data */
     ) external pure override returns (uint256 accountedOut, uint256 exitGain) {
-        // For mock strategy in delegatecall mode, return 0 to force fallback to regular divest
-        // This ensures tokens are actually moved from the strategy for testing
-        accountedOut = 0;
-        exitGain = 0;
+        // In delegatecall context, this = vault
+        // For mock strategy, we just return the requested amount
+        // In real implementation, this would withdraw from a protocol
+        
+        accountedOut = amountOut;
+        // No exit gain for mock strategy
+        return (accountedOut, 0);
     }
 
-    // Additional helper functions not in interface
-    function totalAssets() external view returns (uint256) {
-        return IERC20(asset).balanceOf(address(this));
+    /**
+     * @notice Emergency withdraw (delegatecall from vault)
+     * @param amount The amount to withdraw
+     * @return withdrawn The amount actually withdrawn
+     */
+    function emergencyWithdrawDelegate(
+        address /* asset */,
+        uint256 amount,
+        bytes calldata /* data */
+    ) external pure override returns (uint256 withdrawn) {
+        // In delegatecall context, this = vault
+        // For mock strategy, we just return the requested amount
+        // In real implementation, this would perform emergency withdrawal from a protocol
+        
+        withdrawn = amount;
+        return withdrawn;
     }
 
-    function harvest() external returns (uint256) {
-        // Simulate harvest by minting 10% profit
-        uint256 balance = IERC20(asset).balanceOf(address(this));
-        uint256 profit = balance / 10;
-        lastHarvestTime = block.timestamp;
-        return profit;
-    }
-
-    // Helper function to simulate profit - not used since balance is tracked directly
-    function simulateProfit(uint256 profitAmount) external {
-        // This function is deprecated - just send tokens directly to the strategy
-    }
-
-    // Helper function to simulate loss - not used since balance is tracked directly  
-    function simulateLoss(uint256 lossAmount) external {
-        // This function is deprecated - just transfer tokens out of the strategy
+    /**
+     * @notice Get total underlying assets for a vault
+     * @return The total underlying assets (simulated)
+     */
+    function totalUnderlying(address /* vault */) external pure override returns (uint256) {
+        // For mock strategy, we simulate that the vault has no invested assets
+        // In real implementation, this would query the actual protocol balance
+        // Since this is stateless, we can't track balances here
+        // The vault should track its own invested amounts if needed for testing
+        return 0;
     }
 }
