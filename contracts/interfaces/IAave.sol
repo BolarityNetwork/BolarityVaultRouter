@@ -20,3 +20,11 @@ interface IAToken {
     function balanceOf(address user) external view returns (uint256);
     function UNDERLYING_ASSET_ADDRESS() external view returns (address);
 }
+
+interface IPoolDataProvider {
+    function getReserveTokensAddresses(address asset) external view returns (
+        address aTokenAddress,
+        address stableDebtTokenAddress, 
+        address variableDebtTokenAddress
+    );
+}

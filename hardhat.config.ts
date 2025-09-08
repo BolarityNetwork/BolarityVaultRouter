@@ -22,6 +22,9 @@ const config: HardhatUserConfig = {
               process.env.PRIVATE!,
           ]
     },
+  },
+  etherscan: {
+    apiKey: process.env.API_KEY!,
   }
 };
 

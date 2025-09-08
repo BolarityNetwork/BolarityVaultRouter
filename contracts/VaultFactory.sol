@@ -67,11 +67,7 @@ contract VaultFactory is Ownable {
             perfFeeBps
         );
         
-        // Set router if configured (before transferring ownership)
-        if (router != address(0)) {
-            BolarityVault(vault).setRouter(router);
-        }
-        
+        // Transfer ownership
         BolarityVault(vault).transferOwnership(owner());
         
         registry.registerVault(asset, market, vault);

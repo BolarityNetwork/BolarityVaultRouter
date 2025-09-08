@@ -13,6 +13,7 @@ describe("VaultFactory", function () {
   let factory: VaultFactory;
   let registry: Registry;
   let mockToken: MockERC20;
+  let mockAavePool: any;
   let mockStrategy: MockStrategy;
   let owner: SignerWithAddress;
   let nonOwner: SignerWithAddress;
@@ -30,9 +31,14 @@ describe("VaultFactory", function () {
     mockToken = await MockERC20.deploy("Mock Token", "MOCK", 18);
     await mockToken.waitForDeployment();
 
-    // Deploy mock strategy
+    // Deploy mock Aave pool (simulates Aave pool)
+    const MockAavePool = await ethers.getContractFactory("MockAavePool");
+    mockAavePool = await MockAavePool.deploy();
+    await mockAavePool.waitForDeployment();
+
+    // Deploy mock strategy with pool address
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    mockStrategy = await MockStrategy.deploy();
+    mockStrategy = await MockStrategy.deploy(mockAavePool.target);
     await mockStrategy.waitForDeployment();
 
     // Deploy Registry

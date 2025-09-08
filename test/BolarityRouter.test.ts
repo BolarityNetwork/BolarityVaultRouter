@@ -18,6 +18,7 @@ describe("BolarityRouter", function () {
   let vault2: BolarityVault;
   let token1: MockERC20;
   let token2: MockERC20;
+  let mockAavePool: any;
   let strategy1: MockStrategy;
   let strategy2: MockStrategy;
   
@@ -67,12 +68,17 @@ describe("BolarityRouter", function () {
     token2 = await MockERC20.deploy("Mock Token 2", "MOCK2", 18);
     await token2.waitForDeployment();
 
-    // Deploy Mock Strategies
+    // Deploy Mock Aave Pool (simulates Aave pool)
+    const MockAavePool = await ethers.getContractFactory("MockAavePool");
+    mockAavePool = await MockAavePool.deploy();
+    await mockAavePool.waitForDeployment();
+
+    // Deploy Mock Strategies with pool address
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    strategy1 = await MockStrategy.deploy();
+    strategy1 = await MockStrategy.deploy(mockAavePool.target);
     await strategy1.waitForDeployment();
     
-    strategy2 = await MockStrategy.deploy();
+    strategy2 = await MockStrategy.deploy(mockAavePool.target);
     await strategy2.waitForDeployment();
 
     // Create vaults through factory
@@ -102,6 +108,10 @@ describe("BolarityRouter", function () {
     
     vault1 = await ethers.getContractAt("BolarityVault", vault1Address);
     vault2 = await ethers.getContractAt("BolarityVault", vault2Address);
+    
+    // Set router on vaults
+    await vault1.setRouter(await router.getAddress());
+    await vault2.setRouter(await router.getAddress());
 
     // Mint tokens to user
     await token1.mint(user.address, INITIAL_BALANCE);

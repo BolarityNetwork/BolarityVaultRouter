@@ -7,6 +7,7 @@ import { Contract } from "ethers";
 describe("BolarityVault", function () {
   let vault: BolarityVault;
   let mockToken: Contract;
+  let mockAavePool: Contract;
   let mockStrategy: Contract;
   let owner: SignerWithAddress;
   let user1: SignerWithAddress;
@@ -25,9 +26,14 @@ describe("BolarityVault", function () {
     mockToken = await MockERC20.deploy("Mock Token", "MOCK", 18);
     await mockToken.waitForDeployment();
 
-    // Deploy Mock Strategy
+    // Deploy Mock Aave Pool (simulates Aave pool)
+    const MockAavePool = await ethers.getContractFactory("MockAavePool");
+    mockAavePool = await MockAavePool.deploy();
+    await mockAavePool.waitForDeployment();
+
+    // Deploy Mock Strategy with pool address
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    mockStrategy = await MockStrategy.deploy();
+    mockStrategy = await MockStrategy.deploy(mockAavePool.target);
     await mockStrategy.waitForDeployment();
 
     // Deploy BolarityVault
@@ -230,7 +236,7 @@ describe("BolarityVault", function () {
   describe("Strategy Management", function () {
     it("Should allow owner to change strategy", async function () {
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy();
+      const newStrategy = await MockStrategy.deploy(mockAavePool.target);
       await newStrategy.waitForDeployment();
 
       await expect(vault.setStrategy(newStrategy.target))
@@ -244,7 +250,7 @@ describe("BolarityVault", function () {
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy();
+      const newStrategy = await MockStrategy.deploy(mockAavePool.target);
       await newStrategy.waitForDeployment();
 
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
@@ -324,15 +330,21 @@ describe("BolarityVault", function () {
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
+      const poolBalanceBefore = await mockToken.balanceOf(mockAavePool.target);
 
-      // Emergency withdraw doesn't change vault balance since funds are already in vault
-      // It just updates internal accounting
+      // After deposit, funds should be in the pool, not the vault
+      expect(vaultBalanceBefore).to.equal(0);
+      expect(poolBalanceBefore).to.equal(DEPOSIT_AMOUNT);
+
+      // Emergency withdraw should bring funds back from pool to vault
       await vault["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT);
 
       const vaultBalanceAfter = await mockToken.balanceOf(vault.target);
+      const poolBalanceAfter = await mockToken.balanceOf(mockAavePool.target);
 
-      // Funds remain in vault (delegatecall pattern)
-      expect(vaultBalanceAfter).to.equal(vaultBalanceBefore);
+      // Funds should return to vault after emergency withdraw
+      expect(vaultBalanceAfter).to.equal(DEPOSIT_AMOUNT);
+      expect(poolBalanceAfter).to.equal(0);
     });
 
     it("Should revert if non-owner tries emergency withdraw", async function () {

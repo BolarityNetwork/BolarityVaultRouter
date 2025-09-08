@@ -19,6 +19,7 @@ describe("Vault System Integration", function () {
   let vaultUniswap: BolarityVault;
   let usdc: MockERC20;
   let dai: MockERC20;
+  let mockAavePool: any;
   let strategyAAVE: MockStrategy;
   let strategyCompound: MockStrategy;
   let strategyUniswap: MockStrategy;
@@ -62,6 +63,9 @@ describe("Vault System Integration", function () {
       await factory.getAddress()
     );
     await router.waitForDeployment();
+    
+    // Set router on factory
+    await factory.setRouter(await router.getAddress());
 
     // Deploy mock tokens
     const MockERC20 = await ethers.getContractFactory("MockERC20");
@@ -71,18 +75,23 @@ describe("Vault System Integration", function () {
     dai = await MockERC20.deploy("Dai Stablecoin", "DAI", 18);
     await dai.waitForDeployment();
 
+    // Deploy mock Aave pool
+    const MockAavePool = await ethers.getContractFactory("MockAavePool");
+    mockAavePool = await MockAavePool.deploy();
+    await mockAavePool.waitForDeployment();
+
     // Deploy strategies
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    strategyAAVE = await MockStrategy.deploy();
+    strategyAAVE = await MockStrategy.deploy(mockAavePool.target);
     await strategyAAVE.waitForDeployment();
     
-    strategyCompound = await MockStrategy.deploy();
+    strategyCompound = await MockStrategy.deploy(mockAavePool.target);
     await strategyCompound.waitForDeployment();
     
-    strategyUniswap = await MockStrategy.deploy();
+    strategyUniswap = await MockStrategy.deploy(mockAavePool.target);
     await strategyUniswap.waitForDeployment();
     
-    strategyDAI = await MockStrategy.deploy();
+    strategyDAI = await MockStrategy.deploy(mockAavePool.target);
     await strategyDAI.waitForDeployment();
 
     // Create vaults for USDC across different markets
@@ -140,6 +149,18 @@ describe("Vault System Integration", function () {
       "BolarityVault",
       await registry.getVault(usdc.target, MARKET_UNISWAP)
     );
+    
+    // Get DAI vault instance
+    const vaultDAI = await ethers.getContractAt(
+      "BolarityVault",
+      await registry.getVault(dai.target, MARKET_AAVE)
+    );
+    
+    // Set router on all vaults
+    await vaultAAVE.setRouter(await router.getAddress());
+    await vaultCompound.setRouter(await router.getAddress());
+    await vaultUniswap.setRouter(await router.getAddress());
+    await vaultDAI.setRouter(await router.getAddress());
 
     // Set preferred market for USDC
     await factory.recoverRegistryOwnership();
@@ -376,14 +397,15 @@ describe("Vault System Integration", function () {
 
       // Deploy new strategy
       const MockStrategy = await ethers.getContractFactory("MockStrategy");
-      const newStrategy = await MockStrategy.deploy();
+      const newStrategy = await MockStrategy.deploy(mockAavePool.target);
       await newStrategy.waitForDeployment();
 
       // Migrate strategy
       await vaultAAVE.setStrategy(newStrategy.target);
 
-      // Verify funds remain in vault (delegatecall pattern)
-      expect(await usdc.balanceOf(vaultAAVE.target)).to.equal(totalAssetsBefore);
+      // Verify funds were transferred to the pool during deposits
+      expect(await usdc.balanceOf(vaultAAVE.target)).to.equal(0);
+      expect(await usdc.balanceOf(mockAavePool.target)).to.equal(totalAssetsBefore);
       expect(await vaultAAVE.totalAssets()).to.equal(totalAssetsBefore);
 
       // Users should still be able to withdraw
@@ -664,7 +686,7 @@ describe("Vault System Integration", function () {
       // Create vault with maximum fee (30%)
       const maxFeeBps = 3000;
       const newToken = await ethers.deployContract("MockERC20", ["Test", "TEST", 18]);
-      const newStrategy = await ethers.deployContract("MockStrategy");
+      const newStrategy = await ethers.deployContract("MockStrategy", [mockAavePool.target]);
 
       await factory.createVault(
         newToken.target,

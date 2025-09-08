@@ -10,40 +10,20 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @title AaveStrategy
  * @notice Stateless strategy for Aave protocol integration via delegatecall
  * @dev This contract is meant to be used via delegatecall from a vault
+ * Since it's called via delegatecall, it cannot rely on its own storage (like mappings)
  */
 contract AaveStrategy is IStrategy {
     using SafeERC20 for IERC20;
     
     IPool public immutable aavePool;
+    IPoolDataProvider public immutable poolDataProvider;
     uint16 public constant REFERRAL_CODE = 0;
-    
-    // Mapping from underlying asset to its aToken
-    mapping(address => address) public aTokens;
-    
-    // Owner for admin functions
-    address public owner;
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "AaveStrategy: Not owner");
-        _;
-    }
-
-    constructor(address _aavePool) {
+    constructor(address _aavePool, address _poolDataProvider) {
         require(_aavePool != address(0), "AaveStrategy: Invalid pool");
+        require(_poolDataProvider != address(0), "AaveStrategy: Invalid data provider");
         aavePool = IPool(_aavePool);
-        owner = msg.sender; // Set deployer as owner
-    }
-    
-    /**
-     * @notice Register aToken for an asset
-     * @param asset The underlying asset address
-     * @param aToken The corresponding aToken address
-     */
-    function registerAToken(address asset, address aToken) external onlyOwner {
-        require(asset != address(0), "AaveStrategy: Invalid asset");
-        require(aToken != address(0), "AaveStrategy: Invalid aToken");
-        require(IAToken(aToken).UNDERLYING_ASSET_ADDRESS() == asset, "AaveStrategy: Mismatched underlying");
-        aTokens[asset] = aToken;
+        poolDataProvider = IPoolDataProvider(_poolDataProvider);
     }
 
     /**
@@ -58,7 +38,9 @@ contract AaveStrategy is IStrategy {
         uint256 amountIn,
         bytes calldata /* data */
     ) external override returns (uint256 accounted, uint256 entryGain) {
-        require(aTokens[asset] != address(0), "AaveStrategy: Asset not registered");
+        if (amountIn == 0) {
+            return (0, 0);
+        }
         
         // Approve and supply to Aave
         // In delegatecall context, this = vault
@@ -81,7 +63,9 @@ contract AaveStrategy is IStrategy {
         uint256 amountOut,
         bytes calldata /* data */
     ) external override returns (uint256 accountedOut, uint256 exitGain) {
-        require(aTokens[asset] != address(0), "AaveStrategy: Asset not registered");
+        if (amountOut == 0) {
+            return (0, 0);
+        }
         
         // Withdraw from Aave
         // In delegatecall context, this = vault
@@ -102,48 +86,42 @@ contract AaveStrategy is IStrategy {
         uint256 amount,
         bytes calldata /* data */
     ) external override returns (uint256 withdrawn) {
-        require(aTokens[asset] != address(0), "AaveStrategy: Asset not registered");
-        
-        address aToken = aTokens[asset];
-        uint256 aTokenBalance = IAToken(aToken).balanceOf(address(this));
-        
-        if (aTokenBalance > 0) {
-            uint256 toWithdraw = amount > aTokenBalance ? aTokenBalance : amount;
-            withdrawn = aavePool.withdraw(asset, toWithdraw, address(this));
-        }
-        
-        return withdrawn;
-    }
-
-    /**
-     * @notice Get total underlying assets for a vault
-     * @param vault The vault address
-     * @return The total underlying assets in the protocol
-     */
-    function totalUnderlying(address vault) external view override returns (uint256) {
-        // Get the asset from the vault
-        address asset = IBolarityVault(vault).asset();
-        address aToken = aTokens[asset];
-        
-        if (aToken == address(0)) {
+        if (amount == 0) {
             return 0;
         }
         
-        // Return the aToken balance of the vault
-        return IAToken(aToken).balanceOf(vault);
+        // Try to withdraw from Aave
+        // If it fails, return 0
+        try aavePool.withdraw(asset, amount, address(this)) returns (uint256 withdrawnAmount) {
+            return withdrawnAmount;
+        } catch {
+            return 0;
+        }
     }
-    
+
     /**
-     * @notice Transfer ownership of the strategy
-     * @param newOwner The new owner address
+     * @notice Get total underlying assets for a vault in Aave
+     * @param vault The vault address to check balance for
+     * @return The total underlying assets (aToken balance) in the protocol
+     * @dev Queries the aToken address from PoolDataProvider and returns the balance
      */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "AaveStrategy: Invalid owner");
-        owner = newOwner;
+    function totalUnderlying(address vault) external view virtual override returns (uint256) {
+        // Get the asset address from the vault
+        address asset = IBolarityVault(vault).asset();
+        
+        // Get the aToken address from PoolDataProvider
+        (address aTokenAddress, , ) = poolDataProvider.getReserveTokensAddresses(asset);
+        
+        // Return the aToken balance of the vault
+        if (aTokenAddress != address(0)) {
+            return IAToken(aTokenAddress).balanceOf(vault);
+        }
+        
+        return 0;
     }
 }
 
-// Interface to get asset from vault
+// Interface for BolarityVault to get the asset
 interface IBolarityVault {
     function asset() external view returns (address);
 }
