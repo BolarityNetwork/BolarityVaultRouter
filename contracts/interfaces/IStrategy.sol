@@ -26,4 +26,11 @@ interface IStrategy {
     
     // External view for valuation, needs vault address
     function totalUnderlying(address vault) external view returns (uint256);
+    
+    // Preview function for read-only simulation of investment
+    // Returns (accounted, entryGain) without actually executing the investment
+    function previewInvest(
+        address asset,
+        uint256 amountIn
+    ) external view returns (uint256 accounted, uint256 entryGain);
 }

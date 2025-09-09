@@ -119,6 +119,21 @@ contract AaveStrategy is IStrategy {
         
         return 0;
     }
+    
+    /**
+     * @notice Preview investment without executing (view function)
+     * @param asset The asset to invest
+     * @param amountIn The amount to invest
+     * @return accounted The amount that would be accounted for
+     * @return entryGain The entry gain (0 for Aave)
+     */
+    function previewInvest(
+        address asset,
+        uint256 amountIn
+    ) external view override returns (uint256 accounted, uint256 entryGain) {
+        // For Aave, accounted equals amountIn and there's no entry gain
+        return (amountIn, 0);
+    }
 }
 
 // Interface for BolarityVault to get the asset

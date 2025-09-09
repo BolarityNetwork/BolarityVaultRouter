@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @notice Mock strategy that simulates Aave-like behavior for testing
  * @dev This contract simulates a yield strategy similar to AaveStrategy
  * Since this is called via delegatecall, it operates in the vault's context
+ * and MUST be stateless - no storage variables
  */
 contract MockStrategy is IStrategy {
     using SafeERC20 for IERC20;
@@ -18,19 +19,10 @@ contract MockStrategy is IStrategy {
     // Mock pool address (simulates Aave pool)
     IPool public immutable mockPool;
     uint16 public constant REFERRAL_CODE = 0;
-    
-    // Owner for admin functions
-    address public owner;
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "MockStrategy: Not owner");
-        _;
-    }
 
     constructor(address _mockPool) {
         require(_mockPool != address(0), "MockStrategy: Invalid pool");
         mockPool = IPool(_mockPool);
-        owner = msg.sender;
     }
     
 
@@ -126,12 +118,17 @@ contract MockStrategy is IStrategy {
     }
     
     /**
-     * @notice Transfer ownership of the strategy
-     * @param newOwner The new owner address
+     * @notice Preview investment without executing (view function)
+     * @param amountIn The amount to invest
+     * @return accounted The amount that would be accounted for
+     * @return entryGain The entry gain (0 for Mock)
      */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "MockStrategy: Invalid owner");
-        owner = newOwner;
+    function previewInvest(
+        address /* asset */,
+        uint256 amountIn
+    ) external pure override returns (uint256 accounted, uint256 entryGain) {
+        // For Mock strategy, accounted equals amountIn and there's no entry gain
+        return (amountIn, 0);
     }
 }
 

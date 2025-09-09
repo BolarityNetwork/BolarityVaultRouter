@@ -10,53 +10,56 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @title CompoundStrategy
  * @notice Stateless strategy for Compound protocol integration via delegatecall
  * @dev This contract is meant to be used via delegatecall from a vault
+ * Since it's called via delegatecall, it cannot rely on its own storage
+ * The cToken address must be passed via the data parameter
  */
 contract CompoundStrategy is IStrategy {
     using SafeERC20 for IERC20;
     
     uint256 public constant MANTISSA = 1e18;
     
-    // Mapping from underlying asset to its cToken
-    mapping(address => address) public cTokens;
+    // Immutable variables are stored in bytecode, not storage
+    // This maintains the stateless property
+    address public immutable comptroller;
     
-    // Owner for admin functions
-    address public owner;
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "CompoundStrategy: Not owner");
-        _;
-    }
-
-    constructor() {
-        owner = msg.sender; // Set deployer as owner
+    constructor(address _comptroller) {
+        require(_comptroller != address(0), "CompoundStrategy: Invalid comptroller");
+        comptroller = _comptroller;
     }
     
     /**
-     * @notice Register cToken for an asset
-     * @param asset The underlying asset address
-     * @param cToken The corresponding cToken address
+     * @notice Decode cToken address from calldata
+     * @param data The encoded cToken address
+     * @return cToken The decoded cToken address
      */
-    function registerCToken(address asset, address cToken) external onlyOwner {
-        require(asset != address(0), "CompoundStrategy: Invalid asset");
-        require(cToken != address(0), "CompoundStrategy: Invalid cToken");
-        require(ICToken(cToken).underlying() == asset, "CompoundStrategy: Mismatched underlying");
-        cTokens[asset] = cToken;
+    function _decodeCToken(bytes calldata data) internal pure returns (address cToken) {
+        if (data.length >= 32) {
+            cToken = abi.decode(data, (address));
+        }
+        require(cToken != address(0), "CompoundStrategy: Invalid cToken in data");
     }
 
     /**
      * @notice Invest assets into Compound (delegatecall from vault)
-     * @param asset The asset to invest
+     * @param asset The asset to invest  
      * @param amountIn The amount to invest
+     * @param data Encoded cToken address
      * @return accounted The amount accounted for (same as input for Compound)
      * @return entryGain No entry gain for Compound
      */
     function investDelegate(
         address asset,
         uint256 amountIn,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accounted, uint256 entryGain) {
-        address cToken = cTokens[asset];
-        require(cToken != address(0), "CompoundStrategy: Asset not registered");
+        if (amountIn == 0) {
+            return (0, 0);
+        }
+        
+        address cToken = _decodeCToken(data);
+        
+        // Verify cToken matches the asset
+        require(ICToken(cToken).underlying() == asset, "CompoundStrategy: Mismatched underlying");
         
         // Approve and mint cTokens
         // In delegatecall context, this = vault
@@ -72,16 +75,23 @@ contract CompoundStrategy is IStrategy {
      * @notice Withdraw assets from Compound (delegatecall from vault)
      * @param asset The asset to withdraw
      * @param amountOut The amount to withdraw
+     * @param data Encoded cToken address
      * @return accountedOut The amount withdrawn
      * @return exitGain No exit gain for Compound
      */
     function divestDelegate(
         address asset,
         uint256 amountOut,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accountedOut, uint256 exitGain) {
-        address cToken = cTokens[asset];
-        require(cToken != address(0), "CompoundStrategy: Asset not registered");
+        if (amountOut == 0) {
+            return (0, 0);
+        }
+        
+        address cToken = _decodeCToken(data);
+        
+        // Verify cToken matches the asset
+        require(ICToken(cToken).underlying() == asset, "CompoundStrategy: Mismatched underlying");
         
         // Redeem underlying from Compound
         // In delegatecall context, this = vault
@@ -96,15 +106,22 @@ contract CompoundStrategy is IStrategy {
      * @notice Emergency withdraw from Compound (delegatecall from vault)
      * @param asset The asset to withdraw
      * @param amount The amount to withdraw
+     * @param data Encoded cToken address
      * @return withdrawn The amount actually withdrawn
      */
     function emergencyWithdrawDelegate(
         address asset,
         uint256 amount,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 withdrawn) {
-        address cToken = cTokens[asset];
-        require(cToken != address(0), "CompoundStrategy: Asset not registered");
+        if (amount == 0) {
+            return 0;
+        }
+        
+        address cToken = _decodeCToken(data);
+        
+        // Verify cToken matches the asset
+        require(ICToken(cToken).underlying() == asset, "CompoundStrategy: Mismatched underlying");
         
         uint256 cTokenBalance = ICToken(cToken).balanceOf(address(this));
         if (cTokenBalance > 0) {
@@ -124,20 +141,31 @@ contract CompoundStrategy is IStrategy {
     }
 
     /**
-     * @notice Get total underlying assets for a vault
-     * @param vault The vault address
-     * @return The total underlying assets in the protocol
+     * @notice Get total underlying assets for a vault in Compound
+     * @return The total underlying assets (cToken balance * exchange rate)
+     * @dev Since this is stateless, the cToken address needs to be determined
+     * through other means (e.g., passed via vault's state or registry)
+     * For now, this requires external configuration
      */
-    function totalUnderlying(address vault) external view override returns (uint256) {
-        // Get the asset from the vault
-        address asset = IBolarityVault(vault).asset();
-        address cToken = cTokens[asset];
-        
-        if (cToken == address(0)) {
-            return 0;
-        }
-        
-        // Calculate underlying balance from cToken balance
+    function totalUnderlying(address /* vault */) external pure override returns (uint256) {
+        // This is a limitation of stateless design - we can't determine cToken without state
+        // In production, consider:
+        // 1. Having vault store last used cToken address
+        // 2. Using a registry contract that maps (vault, asset) -> cToken
+        // 3. Passing cToken via encoded calldata in a separate view function
+        return 0;
+    }
+    
+    /**
+     * @notice Get total underlying with cToken address provided
+     * @param vault The vault address
+     * @param cToken The cToken address
+     * @return The total underlying assets
+     */
+    function totalUnderlyingWithCToken(
+        address vault,
+        address cToken
+    ) external view returns (uint256) {
         uint256 cTokenBalance = ICToken(cToken).balanceOf(vault);
         if (cTokenBalance == 0) {
             return 0;
@@ -148,12 +176,17 @@ contract CompoundStrategy is IStrategy {
     }
     
     /**
-     * @notice Transfer ownership of the strategy
-     * @param newOwner The new owner address
+     * @notice Preview investment without executing (view function)
+     * @param amountIn The amount to invest
+     * @return accounted The amount that would be accounted for
+     * @return entryGain The entry gain (0 for Compound)
      */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "CompoundStrategy: Invalid owner");
-        owner = newOwner;
+    function previewInvest(
+        address /* asset */,
+        uint256 amountIn
+    ) external pure override returns (uint256 accounted, uint256 entryGain) {
+        // For Compound, accounted equals amountIn and there's no entry gain
+        return (amountIn, 0);
     }
 }
 
