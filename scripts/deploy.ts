@@ -1,11 +1,10 @@
 
 import { ethers } from "hardhat";
 
-const REGISTER          = "0x1Af0f95e9E2078242334B2AF5F7464eEB1683c7f";
-const VAULT_FACTORY     = "0xE8cd4B1EaD3C6D63600a1fbdF8245cDeEC970a5C";
-const BOLARITY_ROUTER   = "0x458561d68a3eEAb1DCf85b079B8166fCC2dC312c";
-const AAVE_STRATEGY     = "0xF6E5710Ab9422273486ea53bA59E6212595A0Be4";
-// const ATOKEN            = "0x3FfAf50D4F4E96eB78f2407c090b72e86eCaed24"; // link atoken
+const REGISTER          = "0xe302dBBC557620C49f7E88D48DDc27a10FA317F6";
+const VAULT_FACTORY     = "0x1c018e72C44fe926005adf01E06EC686B0802CC3";
+const BOLARITY_ROUTER   = "0x619a08B8ff836984307F8f4b27684B463FF42233";
+const AAVE_STRATEGY     = "0x768A323B2e479c29c7cf91B23d2057Cb63787BE6";
 const UNDERLYING_ASSET  = "0xf8fb3713d459d7c1018bd0a49d19b4c44290ebe5"; // link
 const AAVE_POOL         = "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951";
 const AAVE_DATA_PROVIDER = "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31";
@@ -60,22 +59,32 @@ async function main() {
 
   const AaveStrategy_factory = await ethers.getContractFactory("AaveStrategy");
   const AaveStrategy = await AaveStrategy_factory.attach(AAVE_STRATEGY);
-  // Create vault using the strategy
+
+  const MockERC20_factory = await ethers.getContractFactory("MockERC20");
+  const MockERC20 = await MockERC20_factory.attach(UNDERLYING_ASSET);
+
+  const signer = await ethers.provider.getSigner();
   const market = ethers.encodeBytes32String("AAVE-V3");
-  console.log(market);
+  // console.log(market);
+
+  // =====================================create vault===============================================
+
+  // // Create vault using the strategy
   // await VaultFactory.createVault(
   //   UNDERLYING_ASSET, // Link address
   //   market,
   //   AaveStrategy.target,
-  //   await (await ethers.getSigners())[0].getAddress(), // fee collector
+  //   signer.address, // fee collector
   //   2000, // 20% performance fee
   //   "Bolarity Link Vault",
   //   "LinkV"
   // );
   // console.log("Vault created for Link with Aave strategy");
 
-  const signer = await ethers.provider.getSigner();
-  const amout = ethers.parseEther('1');
+  // =====================================deposit===============================================
+
+  // await MockERC20.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+  // const amout = ethers.parseEther('1');
   // await BolarityRouter.deposit(
   //   UNDERLYING_ASSET, // Link address
   //   market,
@@ -84,18 +93,48 @@ async function main() {
   //   '0x',
   // );
   // console.log("Deposit from link vault");
+
+  // =====================================withdraw===============================================
+
+  // const vault = await BolarityRouter.vaultFor(
+  // UNDERLYING_ASSET, // Link address
+  // market);
   // const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
-  // const BolarityVault = await BolarityVault_factory.attach("0x1641aa8f45f8ef6b6f85cc97b78ba3e4ef4d1552");
-  // await BolarityVault.approve(BOLARITY_ROUTER, ethers.parseEther('100000000000'));
+  // const BolarityVault = await BolarityVault_factory.attach(vault);
+  // await BolarityVault.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+  // console.log("Approve success");
   await BolarityRouter.withdraw(
     UNDERLYING_ASSET, // Link address
     market,
-    amout,
+    ethers.MaxUint256,
     signer.address,
     signer.address,
     '0x',
   );
   console.log("Withdraw from link vault");
+
+
+  // =====================================mint===============================================
+  // const shares = ethers.parseEther('1');
+  // await BolarityRouter.mint(
+  //   UNDERLYING_ASSET, // Link address
+  //   market,
+  //   shares,
+  //   signer.address,
+  //   '0x',
+  // );
+  // console.log("Mint shares from link vault");
+
+  // =====================================redeem===============================================
+  // await BolarityRouter.redeem(
+  //   UNDERLYING_ASSET, // Link address
+  //   market,
+  //   shares,
+  //   signer.address,
+  //   signer.address,
+  //   '0x',
+  // );
+  // console.log("Reddem assets from link vault");
 }
 
 // We recommend this pattern to be able to use async/await everywhere

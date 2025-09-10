@@ -24,6 +24,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     uint256 public constant PRECISION = 1e18;
     
     bytes private _pendingStrategyData;
+    bytes private _lastStrategyData; // Store last used strategy data for totalUnderlying calculations
 
     bool private _initialized;
     
@@ -316,14 +317,25 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner
     ) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
-        require(assets > 0, "BolarityVault: Zero assets");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
         // Step 1: Pre-action fee crystallization
         _accruePerfFee();
         
-        // Calculate shares needed
-        shares = previewWithdraw(assets);
+        // Handle max withdrawal: if assets == type(uint256).max, withdraw all
+        if (assets == type(uint256).max) {
+            // Get all shares of the owner
+            shares = balanceOf(owner);
+            require(shares > 0, "BolarityVault: Zero shares");
+            
+            // Calculate actual assets for all shares
+            assets = previewRedeem(shares);
+            require(assets > 0, "BolarityVault: Zero assets");
+        } else {
+            require(assets > 0, "BolarityVault: Zero assets");
+            // Calculate shares needed for specified assets
+            shares = previewWithdraw(assets);
+        }
         
         // Check allowance if not owner
         if (msg.sender != owner) {
@@ -339,9 +351,17 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         // Burn shares and transfer assets
         _burn(owner, shares);
-        _asset.safeTransfer(receiver, assets);
         
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        // Cap withdrawal at actual balance to handle rounding
+        uint256 balance = _asset.balanceOf(address(this));
+        uint256 toTransfer = assets > balance ? balance : assets;
+        
+        _asset.safeTransfer(receiver, toTransfer);
+        
+        emit Withdraw(msg.sender, receiver, owner, toTransfer, shares);
+        
+        // Update return value to match actual transfer
+        assets = toTransfer;
     }
 
     function redeem(
@@ -373,9 +393,17 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         // Burn shares and transfer assets
         _burn(owner, shares);
-        _asset.safeTransfer(receiver, assets);
         
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        // Cap withdrawal at actual balance to handle rounding
+        uint256 balance = _asset.balanceOf(address(this));
+        uint256 toTransfer = assets > balance ? balance : assets;
+        
+        _asset.safeTransfer(receiver, toTransfer);
+        
+        emit Withdraw(msg.sender, receiver, owner, toTransfer, shares);
+        
+        // Update return value to match actual transfer
+        assets = toTransfer;
     }
 
     function _simulateAccruePerfFee() internal view returns (uint256 simulatedTotalAssets, uint256 simulatedTotalSupply) {
@@ -451,11 +479,18 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     
     function _consumeStrategyCallData() internal returns (bytes memory data) {
         data = _pendingStrategyData;
+        if (data.length > 0) {
+            _lastStrategyData = data; // Store for totalUnderlying calculations
+        }
         delete _pendingStrategyData;
     }
 
     function crystallizeFees() external {
         _accruePerfFee();
+    }
+    
+    function lastStrategyData() external view returns (bytes memory) {
+        return _lastStrategyData;
     }
 
     function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0) internal returns (uint256 shares) {
@@ -482,22 +517,31 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             uint256 feeShares = 0;
             if (entryGain > 0 && perfFeeBps > 0) {
                 feeAssetsOnEntry = (entryGain * perfFeeBps) / BPS_DIVISOR;
-                if (S0 > 0 && feeAssetsOnEntry > 0) {
+                
+                // Calculate net accounted assets after fee
+                uint256 netAccounted = accounted > feeAssetsOnEntry ? accounted - feeAssetsOnEntry : 0;
+                
+                if (S0 == 0) {
+                    // First deposit - fee shares equal fee assets
+                    feeShares = feeAssetsOnEntry;
+                    shares = netAccounted;
+                } else {
+                    // Subsequent deposits - calculate proportionally
                     feeShares = (feeAssetsOnEntry * S0) / A0;
-                    if (feeShares > 0) {
-                        _mint(feeCollector, feeShares);
-                    }
+                    shares = (netAccounted * S0) / A0;
                 }
-            }
-            
-            // Calculate net accounted assets after fee
-            uint256 netAccounted = accounted > feeAssetsOnEntry ? accounted - feeAssetsOnEntry : 0;
-            
-            // Calculate user shares
-            if (S0 == 0) {
-                shares = netAccounted;
+                
+                // Mint fee shares if any
+                if (feeShares > 0) {
+                    _mint(feeCollector, feeShares);
+                }
             } else {
-                shares = (netAccounted * S0) / A0;
+                // No entry gain or no performance fee
+                if (S0 == 0) {
+                    shares = accounted;
+                } else {
+                    shares = (accounted * S0) / A0;
+                }
             }
             
             // Mint shares to receiver

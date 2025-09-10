@@ -142,17 +142,33 @@ contract CompoundStrategy is IStrategy {
 
     /**
      * @notice Get total underlying assets for a vault in Compound
+     * @param vault The vault address
      * @return The total underlying assets (cToken balance * exchange rate)
-     * @dev Since this is stateless, the cToken address needs to be determined
-     * through other means (e.g., passed via vault's state or registry)
-     * For now, this requires external configuration
+     * @dev This uses the vault's lastStrategyData to get the cToken address
      */
-    function totalUnderlying(address /* vault */) external pure override returns (uint256) {
-        // This is a limitation of stateless design - we can't determine cToken without state
-        // In production, consider:
-        // 1. Having vault store last used cToken address
-        // 2. Using a registry contract that maps (vault, asset) -> cToken
-        // 3. Passing cToken via encoded calldata in a separate view function
+    function totalUnderlying(address vault) external view override returns (uint256) {
+        // Try to get last strategy data from vault
+        (bool success, bytes memory data) = vault.staticcall(
+            abi.encodeWithSignature("lastStrategyData()")
+        );
+        
+        if (!success || data.length < 32) {
+            return 0;
+        }
+        
+        // Decode the data to get cToken address
+        bytes memory strategyData = abi.decode(data, (bytes));
+        if (strategyData.length >= 32) {
+            address cToken = abi.decode(strategyData, (address));
+            if (cToken != address(0)) {
+                uint256 cTokenBalance = ICToken(cToken).balanceOf(vault);
+                if (cTokenBalance > 0) {
+                    uint256 exchangeRate = ICToken(cToken).exchangeRateStored();
+                    return (cTokenBalance * exchangeRate) / MANTISSA;
+                }
+            }
+        }
+        
         return 0;
     }
     

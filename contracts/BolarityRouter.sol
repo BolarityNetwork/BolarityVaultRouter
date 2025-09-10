@@ -94,14 +94,10 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
             IBolarityVault(vault).setStrategyCallData(data);
         }
         
-        // If owner != msg.sender, router needs approval from owner
-        // Otherwise, owner can withdraw their own shares directly
-        if (owner == msg.sender) {
-            shares = IBolarityVault(vault).withdraw(assets, receiver, msg.sender);
-        } else {
-            // This path requires the owner to have approved the router
-            shares = IBolarityVault(vault).withdraw(assets, receiver, owner);
-        }
+        // Call withdraw with the owner parameter
+        // If owner == msg.sender, user withdraws their own shares
+        // If owner != msg.sender, requires owner's approval to the router
+        shares = IBolarityVault(vault).withdraw(assets, receiver, owner);
         
         emit Withdrawn(asset, market, receiver, assets, shares);
     }
@@ -145,6 +141,12 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
         
+        // Handle max redeem: if shares == type(uint256).max, redeem all shares
+        if (shares == type(uint256).max) {
+            shares = IBolarityVault(vault).balanceOf(owner);
+            require(shares > 0, "BolarityRouter: No shares to redeem");
+        }
+        
         // Set strategy call data if provided
         if (data.length > 0) {
             IBolarityVault(vault).setStrategyCallData(data);
@@ -184,6 +186,13 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external view override returns (uint256 shares) {
         address vault = registry.getVault(asset, market);
         if (vault == address(0)) return 0;
+        
+        // Handle max withdraw preview
+        if (assets == type(uint256).max) {
+            // For max withdraw, return all shares of the caller
+            return IBolarityVault(vault).balanceOf(msg.sender);
+        }
+        
         return IBolarityVault(vault).previewWithdraw(assets);
     }
 
@@ -204,6 +213,15 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external view override returns (uint256 assets) {
         address vault = registry.getVault(asset, market);
         if (vault == address(0)) return 0;
+        
+        // Handle max redeem preview
+        if (shares == type(uint256).max) {
+            // For max redeem, calculate assets for all shares of the caller
+            uint256 allShares = IBolarityVault(vault).balanceOf(msg.sender);
+            if (allShares == 0) return 0;
+            return IBolarityVault(vault).previewRedeem(allShares);
+        }
+        
         return IBolarityVault(vault).previewRedeem(shares);
     }
 

@@ -38,22 +38,38 @@ interface IPendleRouter {
         uint256 eps;
     }
     
+    struct FillOrderParams {
+        bytes data;
+    }
+    
+    struct LimitOrderData {
+        address limitRouter;
+        uint256 epsSkipMarket;
+        FillOrderParams[] normalFills;
+        FillOrderParams[] flashFills;
+        bytes optData;
+    }
+    
     /**
      * @notice Swap exact tokens for PT
      * @param receiver Address to receive PT
      * @param market Pendle market address
      * @param minPtOut Minimum PT to receive
+     * @param guessPtOut Approximation parameters
      * @param input Token input details
+     * @param limit Limit order data
      * @return netPtOut Amount of PT received
      * @return netSyFee Amount of SY fee
+     * @return netSyInterm Intermediate SY amount
      */
     function swapExactTokenForPt(
         address receiver,
         address market,
         uint256 minPtOut,
         ApproxParams calldata guessPtOut,
-        TokenInput calldata input
-    ) external returns (uint256 netPtOut, uint256 netSyFee);
+        TokenInput calldata input,
+        LimitOrderData calldata limit
+    ) external returns (uint256 netPtOut, uint256 netSyFee, uint256 netSyInterm);
     
     /**
      * @notice Swap PT for exact tokens
@@ -61,15 +77,18 @@ interface IPendleRouter {
      * @param market Pendle market address
      * @param exactPtIn Exact amount of PT to swap
      * @param output Token output details
+     * @param limit Limit order data
      * @return netTokenOut Amount of tokens received
      * @return netSyFee Amount of SY fee
+     * @return netSyInterm Intermediate SY amount
      */
     function swapExactPtForToken(
         address receiver,
         address market,
         uint256 exactPtIn,
-        TokenOutput calldata output
-    ) external returns (uint256 netTokenOut, uint256 netSyFee);
+        TokenOutput calldata output,
+        LimitOrderData calldata limit
+    ) external returns (uint256 netTokenOut, uint256 netSyFee, uint256 netSyInterm);
     
     struct TokenOutput {
         address tokenOut;

@@ -81,7 +81,7 @@ contract PendlePTStrategy is IStrategy {
         IPendleRouter.TokenInput memory tokenInput = IPendleRouter.TokenInput({
             tokenIn: asset,
             netTokenIn: amountIn,
-            tokenMintSy: asset, // Using same asset for simplicity
+            tokenMintSy: pt, // PT address for minting
             pendleSwap: address(0),
             swapData: IPendleRouter.SwapData({
                 swapType: IPendleRouter.SwapType.NONE,
@@ -91,14 +91,23 @@ contract PendlePTStrategy is IStrategy {
             })
         });
         
+        IPendleRouter.LimitOrderData memory limitData = IPendleRouter.LimitOrderData({
+            limitRouter: address(0),
+            epsSkipMarket: 0,
+            normalFills: new IPendleRouter.FillOrderParams[](0),
+            flashFills: new IPendleRouter.FillOrderParams[](0),
+            optData: ""
+        });
+        
         // Swap asset for PT
         // In delegatecall context, this = vault
-        (uint256 netPtOut, ) = pendleRouter.swapExactTokenForPt(
+        (uint256 netPtOut, , ) = pendleRouter.swapExactTokenForPt(
             address(this), // receiver (vault)
             market,
             0, // minPtOut - should be calculated properly in production
             approxParams,
-            tokenInput
+            tokenInput,
+            limitData
         );
         
         // Calculate actual PT received
@@ -160,8 +169,9 @@ contract PendlePTStrategy is IStrategy {
             uint256 ptBalance = IERC20(pt).balanceOf(address(this));
             
             // Estimate how much PT we need to sell to get amountOut
-            // In production, this should use proper calculations
-            uint256 ptToSell = amountOut; // Simplified - assumes 1:1
+            // Account for the discount rate: PT trades at discount to underlying
+            // If 1 PT = 0.9259 USDC, then to get X USDC we need X / 0.9259 PT
+            uint256 ptToSell = (amountOut * 1e18) / pendleOracle.getPtToAssetRate(market, TWAP_DURATION);
             if (ptToSell > ptBalance) {
                 ptToSell = ptBalance;
             }
@@ -172,7 +182,7 @@ contract PendlePTStrategy is IStrategy {
             IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
                 tokenOut: asset,
                 minTokenOut: 0, // Should be calculated properly in production
-                tokenRedeemSy: asset,
+                tokenRedeemSy: pt, // PT address for redeeming
                 pendleSwap: address(0),
                 swapData: IPendleRouter.SwapData({
                     swapType: IPendleRouter.SwapType.NONE,
@@ -182,12 +192,21 @@ contract PendlePTStrategy is IStrategy {
                 })
             });
             
+            IPendleRouter.LimitOrderData memory limitData = IPendleRouter.LimitOrderData({
+                limitRouter: address(0),
+                epsSkipMarket: 0,
+                normalFills: new IPendleRouter.FillOrderParams[](0),
+                flashFills: new IPendleRouter.FillOrderParams[](0),
+                optData: ""
+            });
+            
             // Swap PT for asset
-            (uint256 netTokenOut, ) = pendleRouter.swapExactPtForToken(
+            (uint256 netTokenOut, , ) = pendleRouter.swapExactPtForToken(
                 address(this), // receiver (vault)
                 market,
                 ptToSell,
-                tokenOutput
+                tokenOutput,
+                limitData
             );
             
             accountedOut = netTokenOut;
@@ -250,12 +269,44 @@ contract PendlePTStrategy is IStrategy {
      * @notice Get total underlying value for a vault's PT position
      * @param vault The vault address
      * @return The total underlying value (face value of PT holdings)
-     * @dev For PT, we return the face value (amount redeemable at maturity)
+     * @dev This uses the vault's lastStrategyData to get the market and PT addresses
      */
     function totalUnderlying(address vault) external view override returns (uint256) {
-        // This is simplified - in production, need to track which PT the vault holds
-        // Could be passed via vault's state or registry
-        // For now, return 0 as we can't determine PT address without state
+        // Try to get last strategy data from vault
+        (bool success, bytes memory data) = vault.staticcall(
+            abi.encodeWithSignature("lastStrategyData()")
+        );
+        
+        if (!success || data.length < 32) {
+            return 0;
+        }
+        
+        // Decode the data to get market and PT addresses
+        bytes memory strategyData = abi.decode(data, (bytes));
+        if (strategyData.length >= 64) {
+            (address market, address pt) = abi.decode(strategyData, (address, address));
+            if (market != address(0) && pt != address(0)) {
+                uint256 ptBalance = IERC20(pt).balanceOf(vault);
+                
+                if (ptBalance == 0) {
+                    return 0;
+                }
+                
+                if (IPendlePT(pt).isExpired()) {
+                    // If matured, PT is worth face value (1:1 with underlying)
+                    return ptBalance;
+                } else {
+                    // If not matured, use oracle to get current value
+                    try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 rate) {
+                        return (ptBalance * rate) / 1e18;
+                    } catch {
+                        // Fallback to face value if oracle fails
+                        return ptBalance;
+                    }
+                }
+            }
+        }
+        
         return 0;
     }
     

@@ -147,6 +147,53 @@ describe("BolarityVault", function () {
       expect(await vault.balanceOf(user1.address)).to.be.lessThan(DEPOSIT_AMOUNT);
     });
 
+    it("Should withdraw all assets when passing type(uint256).max", async function () {
+      // Get initial balances
+      const sharesBefore = await vault.balanceOf(user1.address);
+      const tokenBalanceBefore = await mockToken.balanceOf(user1.address);
+      
+      // Withdraw all using max uint256 value
+      await expect(vault.connect(user1).withdraw(ethers.MaxUint256, user1.address, user1.address))
+        .to.emit(vault, "Withdraw");
+      
+      // Check that all shares are burned
+      const sharesAfter = await vault.balanceOf(user1.address);
+      expect(sharesAfter).to.equal(0);
+      
+      // Check that user received tokens back
+      const tokenBalanceAfter = await mockToken.balanceOf(user1.address);
+      expect(tokenBalanceAfter).to.be.greaterThan(tokenBalanceBefore);
+      
+      // Should have received approximately the deposited amount (minus any fees)
+      const tokensReceived = tokenBalanceAfter - tokenBalanceBefore;
+      expect(tokensReceived).to.be.closeTo(DEPOSIT_AMOUNT, ethers.parseEther("0.01"));
+    });
+
+    it("Should handle multiple users withdrawing all assets", async function () {
+      // User2 also deposits
+      await vault.connect(user2).deposit(DEPOSIT_AMOUNT * 2n, user2.address);
+      
+      // Both users have shares
+      expect(await vault.balanceOf(user1.address)).to.equal(DEPOSIT_AMOUNT);
+      expect(await vault.balanceOf(user2.address)).to.equal(DEPOSIT_AMOUNT * 2n);
+      
+      // User1 withdraws all
+      await vault.connect(user1).withdraw(ethers.MaxUint256, user1.address, user1.address);
+      expect(await vault.balanceOf(user1.address)).to.equal(0);
+      
+      // User2 can still withdraw all their assets
+      const user2TokensBefore = await mockToken.balanceOf(user2.address);
+      await vault.connect(user2).withdraw(ethers.MaxUint256, user2.address, user2.address);
+      
+      // User2 should have no shares left
+      expect(await vault.balanceOf(user2.address)).to.equal(0);
+      
+      // User2 should have received their tokens
+      const user2TokensAfter = await mockToken.balanceOf(user2.address);
+      const tokensReceived = user2TokensAfter - user2TokensBefore;
+      expect(tokensReceived).to.be.closeTo(DEPOSIT_AMOUNT * 2n, ethers.parseEther("0.02"));
+    });
+
     it("Should divest funds from strategy", async function () {
       const withdrawAmount = ethers.parseEther("500");
       const strategyBalanceBefore = await mockToken.balanceOf(mockStrategy.target);

@@ -337,6 +337,25 @@ describe("BolarityRouter", function () {
         )
       ).to.emit(router, "Redeemed");
     });
+
+    it("Should redeem all shares when passing type(uint256).max", async function () {
+      const tokenBalanceBefore = await token1.balanceOf(user.address);
+      
+      await router.connect(user).redeem(
+        token1.target,
+        MARKET_AAVE,
+        ethers.MaxUint256,
+        user.address,
+        user.address,
+        "0x"
+      );
+
+      const sharesAfter = await vault1.balanceOf(user.address);
+      const tokenBalanceAfter = await token1.balanceOf(user.address);
+      
+      expect(sharesAfter).to.equal(0);
+      expect(tokenBalanceAfter).to.be.greaterThan(tokenBalanceBefore);
+    });
   });
 
   describe("depositMultiple", function () {
@@ -521,6 +540,25 @@ describe("BolarityRouter", function () {
       const assets = ethers.parseEther("100");
       const shares = await router.previewWithdraw(token1.target, MARKET_AAVE, assets);
       expect(shares).to.be.greaterThan(0);
+    });
+
+    it("Should preview withdraw with MaxUint256", async function () {
+      const userBalance = await vault1.balanceOf(user.address);
+      const shares = await router.connect(user).previewWithdraw(token1.target, MARKET_AAVE, ethers.MaxUint256);
+      expect(shares).to.equal(userBalance);
+    });
+
+    it("Should preview redeem", async function () {
+      const shares = ethers.parseEther("100");
+      const assets = await router.previewRedeem(token1.target, MARKET_AAVE, shares);
+      expect(assets).to.be.greaterThan(0);
+    });
+
+    it("Should preview redeem with MaxUint256", async function () {
+      const userBalance = await vault1.balanceOf(user.address);
+      const expectedAssets = await vault1.previewRedeem(userBalance);
+      const assets = await router.connect(user).previewRedeem(token1.target, MARKET_AAVE, ethers.MaxUint256);
+      expect(assets).to.equal(expectedAssets);
     });
 
     it("Should return zero for non-existent vault", async function () {
