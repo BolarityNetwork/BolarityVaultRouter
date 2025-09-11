@@ -1,13 +1,13 @@
 
 import { ethers } from "hardhat";
 
-const REGISTER          = "0xe302dBBC557620C49f7E88D48DDc27a10FA317F6";
-const VAULT_FACTORY     = "0x1c018e72C44fe926005adf01E06EC686B0802CC3";
-const BOLARITY_ROUTER   = "0x619a08B8ff836984307F8f4b27684B463FF42233";
-const AAVE_STRATEGY     = "0x768A323B2e479c29c7cf91B23d2057Cb63787BE6";
-const UNDERLYING_ASSET  = "0xf8fb3713d459d7c1018bd0a49d19b4c44290ebe5"; // link
-const AAVE_POOL         = "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951";
-const AAVE_DATA_PROVIDER = "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31";
+const REGISTER            = "0x8C3170C60008a132419AAAB78a0FE3972669Aa13";
+const VAULT_FACTORY       = "0xfC1550a3069FB9bE11cA63cdDfd40a99AD97223d";
+const BOLARITY_ROUTER     = "0x687518E52916F762F3f81e44018c101Eb8608Ce3";
+const AAVE_STRATEGY       = "0x97b09a576258c68e687d6343274a35ae56dCC6fC";
+const UNDERLYING_ASSET    = "0xf8fb3713d459d7c1018bd0a49d19b4c44290ebe5"; // link
+const AAVE_POOL           = "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951";
+const AAVE_DATA_PROVIDER  = "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31";
 
 async function main() {
   // console.log("Starting deployment...");
@@ -65,7 +65,7 @@ async function main() {
 
   const signer = await ethers.provider.getSigner();
   const market = ethers.encodeBytes32String("AAVE-V3");
-  // console.log(market);
+  console.log(market);
 
   // =====================================create vault===============================================
 
@@ -83,16 +83,16 @@ async function main() {
 
   // =====================================deposit===============================================
 
-  // await MockERC20.approve(BOLARITY_ROUTER, ethers.MaxUint256);
-  // const amout = ethers.parseEther('1');
-  // await BolarityRouter.deposit(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   amout,
-  //   signer.address,
-  //   '0x',
-  // );
-  // console.log("Deposit from link vault");
+  await MockERC20.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+  const amout = ethers.parseEther('1');
+  await BolarityRouter.deposit(
+    UNDERLYING_ASSET, // Link address
+    market,
+    amout,
+    signer.address,
+    '0x',
+  );
+  console.log("Deposit from link vault");
 
   // =====================================withdraw===============================================
 
@@ -103,15 +103,15 @@ async function main() {
   // const BolarityVault = await BolarityVault_factory.attach(vault);
   // await BolarityVault.approve(BOLARITY_ROUTER, ethers.MaxUint256);
   // console.log("Approve success");
-  await BolarityRouter.withdraw(
-    UNDERLYING_ASSET, // Link address
-    market,
-    ethers.MaxUint256,
-    signer.address,
-    signer.address,
-    '0x',
-  );
-  console.log("Withdraw from link vault");
+  // await BolarityRouter.withdraw(
+  //   UNDERLYING_ASSET, // Link address
+  //   market,
+  //   ethers.MaxUint256,
+  //   signer.address,
+  //   signer.address,
+  //   '0x',
+  // );
+  // console.log("Withdraw from link vault");
 
 
   // =====================================mint===============================================

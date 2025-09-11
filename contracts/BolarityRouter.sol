@@ -141,25 +141,15 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
         
-        // Handle max redeem: if shares == type(uint256).max, redeem all shares
-        if (shares == type(uint256).max) {
-            shares = IBolarityVault(vault).balanceOf(owner);
-            require(shares > 0, "BolarityRouter: No shares to redeem");
-        }
-        
         // Set strategy call data if provided
         if (data.length > 0) {
             IBolarityVault(vault).setStrategyCallData(data);
         }
         
-        // If owner != msg.sender, router needs approval from owner
-        // Otherwise, owner can redeem their own shares directly
-        if (owner == msg.sender) {
-            assets = IBolarityVault(vault).redeem(shares, receiver, msg.sender);
-        } else {
-            // This path requires the owner to have approved the router
-            assets = IBolarityVault(vault).redeem(shares, receiver, owner);
-        }
+        // Call redeem with the owner parameter
+        // If owner == msg.sender, user redeems their own shares
+        // If owner != msg.sender, requires owner's approval to the router
+        assets = IBolarityVault(vault).redeem(shares, receiver, owner);
         
         emit Redeemed(asset, market, receiver, shares, assets);
     }

@@ -173,7 +173,11 @@ contract WstETHStrategy is IStrategy {
         uint256 amountIn
     ) external view override returns (uint256 accounted, uint256 entryGain) {
         require(asset == address(stETH), "WstETHStrategy: Asset must be stETH");
-        // For wstETH, accounted equals amountIn and there's no entry gain
+        
+        // For wstETH, we wrap stETH at a 1:1 accounting basis
+        // The actual wstETH amount received will be less due to the rebasing mechanism,
+        // but we account for the full stETH value as that's what will be returned at unwrap
+        // wstETH is a wrapped yield-bearing asset, so there's no entry gain
         return (amountIn, 0);
     }
 }

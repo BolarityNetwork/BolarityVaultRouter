@@ -131,7 +131,9 @@ contract AaveStrategy is IStrategy {
         address asset,
         uint256 amountIn
     ) external view override returns (uint256 accounted, uint256 entryGain) {
-        // For Aave, accounted equals amountIn and there's no entry gain
+        // For Aave, the deposit is 1:1 - you get aTokens equal to the amount deposited
+        // The actual yield accumulates over time in the aToken balance, not at deposit time
+        // Therefore: accounted = amountIn, entryGain = 0
         return (amountIn, 0);
     }
 }

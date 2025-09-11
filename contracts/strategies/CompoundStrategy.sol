@@ -201,7 +201,10 @@ contract CompoundStrategy is IStrategy {
         address /* asset */,
         uint256 amountIn
     ) external pure override returns (uint256 accounted, uint256 entryGain) {
-        // For Compound, accounted equals amountIn and there's no entry gain
+        // For Compound, minting cTokens is a 1:1 operation with the underlying asset
+        // The protocol tracks your deposited balance and yields accumulate over time
+        // There's no immediate entry gain at deposit time
+        // Therefore: accounted = amountIn, entryGain = 0
         return (amountIn, 0);
     }
 }

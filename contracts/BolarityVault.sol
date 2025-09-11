@@ -121,14 +121,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     function totalAssets() public view override returns (uint256) {
         uint256 idle = _asset.balanceOf(address(this));
         uint256 invested = 0;
-        if (strategy != address(0)) {
-            // Call totalUnderlying(vault) on strategy
-            (bool success, bytes memory data) = strategy.staticcall(
-                abi.encodeWithSignature("totalUnderlying(address)", address(this))
-            );
-            if (success && data.length >= 32) {
-                invested = abi.decode(data, (uint256));
-            }
+        // Call totalUnderlying(vault) on strategy
+        (bool success, bytes memory data) = strategy.staticcall(
+            abi.encodeWithSignature("totalUnderlying(address)", address(this))
+        );
+        if (success && data.length >= 32) {
+            invested = abi.decode(data, (uint256));
         }
         return idle + invested;
     }
@@ -172,15 +170,13 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 accounted = assets;
         uint256 entryGain = 0;
         
-        if (strategy != address(0)) {
-            // Try to get preview from strategy (read-only simulation)
-            (bool success, bytes memory data) = strategy.staticcall(
-                abi.encodeWithSignature("previewInvest(address,uint256)", asset(), assets)
-            );
-            
-            if (success && data.length >= 64) {
-                (accounted, entryGain) = abi.decode(data, (uint256, uint256));
-            }
+        // Try to get preview from strategy (read-only simulation)
+        (bool success, bytes memory data) = strategy.staticcall(
+            abi.encodeWithSignature("previewInvest(address,uint256)", asset(), assets)
+        );
+        
+        if (success && data.length >= 64) {
+            (accounted, entryGain) = abi.decode(data, (uint256, uint256));
         }
         
         // Calculate fee on entry gain
@@ -212,15 +208,13 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 accounted = assets;
         uint256 entryGain = 0;
         
-        if (strategy != address(0)) {
-            // Try to get preview from strategy (read-only simulation)
-            (bool success, bytes memory data) = strategy.staticcall(
-                abi.encodeWithSignature("previewInvest(address,uint256)", asset(), assets)
-            );
-            
-            if (success && data.length >= 64) {
-                (accounted, entryGain) = abi.decode(data, (uint256, uint256));
-            }
+        // Try to get preview from strategy (read-only simulation)
+        (bool success, bytes memory data) = strategy.staticcall(
+            abi.encodeWithSignature("previewInvest(address,uint256)", asset(), assets)
+        );
+        
+        if (success && data.length >= 64) {
+            (accounted, entryGain) = abi.decode(data, (uint256, uint256));
         }
         
         // Account for entry gain fees
@@ -292,6 +286,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             lastP = PRECISION;
         }
         
+        // Calculate assets needed for shares BEFORE fee crystallization
+        assets = previewMint(shares);
+        require(assets > 0, "BolarityVault: Zero assets");
+        
         // Step 1: Pre-action fee crystallization
         _accruePerfFee();
         
@@ -299,15 +297,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 A0 = totalAssets();
         uint256 S0 = totalSupply();
         
-        // Calculate assets needed for shares
-        assets = previewMint(shares);
-        require(assets > 0, "BolarityVault: Zero assets");
-        
         // Step 3: Pull assets from user
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         
         // Step 4: Execute strategy investment and mint shares
-        _executeDeposit(assets, receiver, A0, S0);
+        uint256 actualShares = _executeDeposit(assets, receiver, A0, S0);
+        require(actualShares >= shares, "BolarityVault: Insufficient shares minted");
         
         emit Deposit(msg.sender, receiver, assets, shares);
     }
@@ -319,22 +314,26 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     ) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
-        // Step 1: Pre-action fee crystallization
-        _accruePerfFee();
-        
         // Handle max withdrawal: if assets == type(uint256).max, withdraw all
         if (assets == type(uint256).max) {
             // Get all shares of the owner
             shares = balanceOf(owner);
             require(shares > 0, "BolarityVault: Zero shares");
             
-            // Calculate actual assets for all shares
-            assets = previewRedeem(shares);
+            // Step 1: Pre-action fee crystallization
+            _accruePerfFee();
+            
+            // Calculate actual assets for all shares after fee crystallization
+            assets = convertToAssets(shares);
             require(assets > 0, "BolarityVault: Zero assets");
         } else {
             require(assets > 0, "BolarityVault: Zero assets");
-            // Calculate shares needed for specified assets
+            
+            // Calculate shares needed BEFORE fee crystallization for accurate preview
             shares = previewWithdraw(assets);
+            
+            // Step 1: Pre-action fee crystallization
+            _accruePerfFee();
         }
         
         // Check allowance if not owner
@@ -349,19 +348,26 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Execute withdrawal from strategy if needed
         _executeWithdraw(assets);
         
+        // Check balance after withdrawal from strategy
+        uint256 balance = _asset.balanceOf(address(this));
+        
+        // Allow for small rounding errors (0.01% tolerance)
+        uint256 tolerance = (assets * 1) / 10000; // 0.01%
+        if (balance < assets) {
+            // If balance is insufficient but within tolerance, adjust the withdrawal amount
+            if (assets - balance <= tolerance) {
+                assets = balance; // Adjust to actual balance
+            } else {
+                revert("BolarityVault: Insufficient balance after withdrawal");
+            }
+        }
+        
         // Burn shares and transfer assets
         _burn(owner, shares);
         
-        // Cap withdrawal at actual balance to handle rounding
-        uint256 balance = _asset.balanceOf(address(this));
-        uint256 toTransfer = assets > balance ? balance : assets;
+        _asset.safeTransfer(receiver, assets);
         
-        _asset.safeTransfer(receiver, toTransfer);
-        
-        emit Withdraw(msg.sender, receiver, owner, toTransfer, shares);
-        
-        // Update return value to match actual transfer
-        assets = toTransfer;
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
     }
 
     function redeem(
@@ -369,8 +375,15 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner
     ) public override nonReentrant onlyWhenUnpaused returns (uint256 assets) {
-        require(shares > 0, "BolarityVault: Zero shares");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
+        
+        // Handle max redeem: if shares == type(uint256).max, redeem all shares
+        if (shares == type(uint256).max) {
+            shares = balanceOf(owner);
+            require(shares > 0, "BolarityVault: No shares to redeem");
+        } else {
+            require(shares > 0, "BolarityVault: Zero shares");
+        }
         
         // Step 1: Pre-action fee crystallization
         _accruePerfFee();
@@ -384,26 +397,33 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             }
         }
         
-        // Calculate assets for shares
-        assets = previewRedeem(shares);
+        // Calculate assets for shares after fee crystallization
+        assets = convertToAssets(shares);
         require(assets > 0, "BolarityVault: Zero assets");
         
         // Execute withdrawal from strategy if needed
         _executeWithdraw(assets);
         
+        // Check balance after withdrawal from strategy
+        uint256 balance = _asset.balanceOf(address(this));
+        
+        // Allow for small rounding errors (0.01% tolerance)
+        uint256 tolerance = (assets * 1) / 10000; // 0.01%
+        if (balance < assets) {
+            // If balance is insufficient but within tolerance, adjust the withdrawal amount
+            if (assets - balance <= tolerance) {
+                assets = balance; // Adjust to actual balance
+            } else {
+                revert("BolarityVault: Insufficient balance after withdrawal");
+            }
+        }
+        
         // Burn shares and transfer assets
         _burn(owner, shares);
         
-        // Cap withdrawal at actual balance to handle rounding
-        uint256 balance = _asset.balanceOf(address(this));
-        uint256 toTransfer = assets > balance ? balance : assets;
+        _asset.safeTransfer(receiver, assets);
         
-        _asset.safeTransfer(receiver, toTransfer);
-        
-        emit Withdraw(msg.sender, receiver, owner, toTransfer, shares);
-        
-        // Update return value to match actual transfer
-        assets = toTransfer;
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
     }
 
     function _simulateAccruePerfFee() internal view returns (uint256 simulatedTotalAssets, uint256 simulatedTotalSupply) {
@@ -494,74 +514,63 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0) internal returns (uint256 shares) {
-        uint256 idle = _asset.balanceOf(address(this));
-        uint256 toInvest = idle > assets ? assets : idle;
+        uint256 toInvest = assets;
         
-        if (toInvest > 0 && strategy != address(0)) {
-            // Get and consume strategy data
-            bytes memory data = _consumeStrategyCallData();
+        // Get and consume strategy data
+        bytes memory data = _consumeStrategyCallData();
+        
+        // Execute strategy via delegatecall
+        (bool success, bytes memory returnData) = strategy.delegatecall(
+            abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, data)
+        );
+        
+        require(success, "BolarityVault: Strategy invest failed");
+        require(returnData.length >= 64, "BolarityVault: Invalid return data");
+        
+        // Decode return values: (accounted, entryGain)
+        (uint256 accounted, uint256 entryGain) = abi.decode(returnData, (uint256, uint256));
+        
+        // Calculate fee on entry gain
+        uint256 feeAssetsOnEntry = 0;
+        uint256 feeShares = 0;
+        if (entryGain > 0 && perfFeeBps > 0) {
+            feeAssetsOnEntry = (entryGain * perfFeeBps) / BPS_DIVISOR;
             
-            // Execute strategy via delegatecall
-            (bool success, bytes memory returnData) = strategy.delegatecall(
-                abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, data)
-            );
+            // Calculate net accounted assets after fee
+            uint256 netAccounted = accounted > feeAssetsOnEntry ? accounted - feeAssetsOnEntry : 0;
             
-            require(success, "BolarityVault: Strategy invest failed");
-            require(returnData.length >= 64, "BolarityVault: Invalid return data");
-            
-            // Decode return values: (accounted, entryGain)
-            (uint256 accounted, uint256 entryGain) = abi.decode(returnData, (uint256, uint256));
-            
-            // Calculate fee on entry gain
-            uint256 feeAssetsOnEntry = 0;
-            uint256 feeShares = 0;
-            if (entryGain > 0 && perfFeeBps > 0) {
-                feeAssetsOnEntry = (entryGain * perfFeeBps) / BPS_DIVISOR;
-                
-                // Calculate net accounted assets after fee
-                uint256 netAccounted = accounted > feeAssetsOnEntry ? accounted - feeAssetsOnEntry : 0;
-                
-                if (S0 == 0) {
-                    // First deposit - fee shares equal fee assets
-                    feeShares = feeAssetsOnEntry;
-                    shares = netAccounted;
-                } else {
-                    // Subsequent deposits - calculate proportionally
-                    feeShares = (feeAssetsOnEntry * S0) / A0;
-                    shares = (netAccounted * S0) / A0;
-                }
-                
-                // Mint fee shares if any
-                if (feeShares > 0) {
-                    _mint(feeCollector, feeShares);
-                }
-            } else {
-                // No entry gain or no performance fee
-                if (S0 == 0) {
-                    shares = accounted;
-                } else {
-                    shares = (accounted * S0) / A0;
-                }
-            }
-            
-            // Mint shares to receiver
-            _mint(receiver, shares);
-            
-            // Update lastP to avoid double-charging
-            if (totalSupply() > 0) {
-                lastP = (totalAssets() * PRECISION) / totalSupply();
-            }
-            
-            emit Invested(strategy, toInvest);
-        } else {
-            // No strategy or nothing to invest, simple share calculation
             if (S0 == 0) {
-                shares = assets;
+                // First deposit - fee shares equal fee assets
+                feeShares = feeAssetsOnEntry;
+                shares = netAccounted;
             } else {
-                shares = (assets * S0) / A0;
+                // Subsequent deposits - calculate proportionally
+                feeShares = (feeAssetsOnEntry * S0) / A0;
+                shares = (netAccounted * S0) / A0;
             }
-            _mint(receiver, shares);
+            
+            // Mint fee shares if any
+            if (feeShares > 0) {
+                _mint(feeCollector, feeShares);
+            }
+        } else {
+            // No entry gain or no performance fee
+            if (S0 == 0) {
+                shares = accounted;
+            } else {
+                shares = (accounted * S0) / A0;
+            }
         }
+        
+        // Mint shares to receiver
+        _mint(receiver, shares);
+        
+        // Update lastP to avoid double-charging
+        if (totalSupply() > 0) {
+            lastP = (totalAssets() * PRECISION) / totalSupply();
+        }
+        
+        emit Invested(strategy, toInvest);
         
         return shares;
     }
@@ -569,7 +578,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     function _executeWithdraw(uint256 assets) internal {
         uint256 idle = _asset.balanceOf(address(this));
         
-        if (idle < assets && strategy != address(0)) {
+        if (idle < assets) {
             uint256 toWithdraw = assets - idle;
             
             // Get and consume strategy data
@@ -653,34 +662,37 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     function emergencyWithdraw() external onlyOwner {
-        if (strategy != address(0)) {
-            // Get total invested amount
-            (bool success, bytes memory data) = strategy.staticcall(
-                abi.encodeWithSignature("totalUnderlying(address)", address(this))
-            );
+        // Get total invested amount
+        (bool success, bytes memory data) = strategy.staticcall(
+            abi.encodeWithSignature("totalUnderlying(address)", address(this))
+        );
+        
+        if (success && data.length >= 32) {
+            uint256 invested = abi.decode(data, (uint256));
             
-            if (success && data.length >= 32) {
-                uint256 invested = abi.decode(data, (uint256));
-                
-                if (invested > 0) {
-                    // Emergency withdraw via delegatecall
-                    bytes memory emptyData;
-                    strategy.delegatecall(
-                        abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, emptyData)
-                    );
-                    // We don't check success as this is emergency withdraw
-                }
+            if (invested > 0) {
+                // Emergency withdraw via delegatecall
+                bytes memory emptyData;
+                (bool emergencySuccess, ) = strategy.delegatecall(
+                    abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, emptyData)
+                );
+                // We don't check success as this is emergency withdraw
+                // Just capture return value to avoid compiler warning
+                emergencySuccess; // Silence unused variable warning
             }
         }
     }
 
     function emergencyWithdraw(uint256 amount) external override onlyOwner {
-        if (strategy != address(0) && amount > 0) {
+        if (amount > 0) {
             // Emergency withdraw specific amount via delegatecall
             bytes memory emptyData;
-            strategy.delegatecall(
+            (bool emergencySuccess, ) = strategy.delegatecall(
                 abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), amount, emptyData)
             );
+            // We don't check success as this is emergency withdraw
+            // Just capture return value to avoid compiler warning
+            emergencySuccess; // Silence unused variable warning
             // We don't check success as this is emergency withdraw
         }
     }

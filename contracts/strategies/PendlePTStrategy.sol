@@ -349,15 +349,31 @@ contract PendlePTStrategy is IStrategy {
      * @param amountIn The amount to invest
      * @return accounted The amount that would be accounted for
      * @return entryGain The entry gain (positive for PT bought at discount)
+     * @dev This is a simplified preview that cannot query actual market rates
+     *      since it lacks the market and PT addresses needed for accurate calculation.
+     *      In production, consider passing market data through BolarityVault's
+     *      pending strategy data for more accurate previews.
      */
     function previewInvest(
         address asset,
         uint256 amountIn
     ) external pure override returns (uint256 accounted, uint256 entryGain) {
-        // Simplified preview - in production, should query market for actual rates
-        // Assume 8% discount (100 USDC -> 108 PT)
-        accounted = (amountIn * 108) / 100;
-        entryGain = accounted - amountIn;
+        // Without market and PT addresses, we cannot query actual rates
+        // This is a limitation of the current design where preview functions
+        // don't receive the strategy data parameter
+        // 
+        // For now, return conservative estimates:
+        // - Assume PT trades at a small discount (e.g., 2-5%)
+        // - This means 100 USDC might buy 102-105 PT
+        // 
+        // In reality, the discount varies based on:
+        // - Time to maturity
+        // - Market conditions
+        // - Interest rate expectations
+        
+        // Conservative estimate: 2% discount (100 USDC -> 102 PT)
+        accounted = (amountIn * 102) / 100;
+        entryGain = accounted > amountIn ? accounted - amountIn : 0;
         return (accounted, entryGain);
     }
 }
