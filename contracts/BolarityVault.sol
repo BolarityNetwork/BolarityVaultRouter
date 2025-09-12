@@ -253,8 +253,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     function deposit(uint256 assets, address receiver) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
-        require(assets > 0, "BolarityVault: Zero assets");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
+        require(assets > 0, "BolarityVault: Zero assets");
         
         // Initialize lastP before first accrual
         if (lastP == 0 && totalSupply() == 0) {
@@ -316,6 +316,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         // Handle max withdrawal: if assets == type(uint256).max, withdraw all
         if (assets == type(uint256).max) {
+            // When user wants to withdraw all, we use redeem logic internally
+            // This avoids rounding issues from previewWithdraw's upward rounding
+            
             // Get all shares of the owner
             shares = balanceOf(owner);
             require(shares > 0, "BolarityVault: Zero shares");
@@ -323,7 +326,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             // Step 1: Pre-action fee crystallization
             _accruePerfFee();
             
-            // Calculate actual assets for all shares after fee crystallization
+            // Calculate assets using convertToAssets (handles the calculation properly)
             assets = convertToAssets(shares);
             require(assets > 0, "BolarityVault: Zero assets");
         } else {
@@ -398,7 +401,15 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         }
         
         // Calculate assets for shares after fee crystallization
-        assets = convertToAssets(shares);
+        uint256 supply = totalSupply();
+        uint256 allAssets = totalAssets();
+        
+        // If redeeming all shares in the vault, take all assets to avoid rounding issues
+        if (shares == supply) {
+            assets = allAssets;
+        } else {
+            assets = convertToAssets(shares);
+        }
         require(assets > 0, "BolarityVault: Zero assets");
         
         // Execute withdrawal from strategy if needed

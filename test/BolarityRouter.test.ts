@@ -73,12 +73,12 @@ describe("BolarityRouter", function () {
     mockAavePool = await MockAavePool.deploy();
     await mockAavePool.waitForDeployment();
 
-    // Deploy Mock Strategies with pool address
+    // Deploy Mock Strategies
     const MockStrategy = await ethers.getContractFactory("MockStrategy");
-    strategy1 = await MockStrategy.deploy(mockAavePool.target);
+    strategy1 = await MockStrategy.deploy();
     await strategy1.waitForDeployment();
     
-    strategy2 = await MockStrategy.deploy(mockAavePool.target);
+    strategy2 = await MockStrategy.deploy();
     await strategy2.waitForDeployment();
 
     // Create vaults through factory
