@@ -22,6 +22,13 @@ const config: HardhatUserConfig = {
               process.env.PRIVATE!,
           ]
     },
+    base: {
+          url: process.env.EVM_RPC!,
+          chainId: 8453,
+          accounts: [
+              process.env.PRIVATE!,
+          ]
+    },
   },
   etherscan: {
     apiKey: process.env.API_KEY!,

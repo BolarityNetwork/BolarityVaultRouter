@@ -527,8 +527,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0) internal returns (uint256 shares) {
         uint256 toInvest = assets;
         
-        // Get and consume strategy data
+        // Get and consume strategy data, or encode strategy address
         bytes memory data = _consumeStrategyCallData();
+        if (data.length == 0) {
+            // If no data provided, encode the strategy address for CompoundStrategy
+            data = abi.encode(strategy);
+        }
         
         // Execute strategy via delegatecall
         (bool success, bytes memory returnData) = strategy.delegatecall(
@@ -592,8 +596,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         if (idle < assets) {
             uint256 toWithdraw = assets - idle;
             
-            // Get and consume strategy data
+            // Get and consume strategy data, or encode strategy address
             bytes memory data = _consumeStrategyCallData();
+            if (data.length == 0) {
+                // If no data provided, encode the strategy address for CompoundStrategy
+                data = abi.encode(strategy);
+            }
             
             // Execute strategy via delegatecall
             (bool success, bytes memory returnData) = strategy.delegatecall(
@@ -682,10 +690,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             uint256 invested = abi.decode(data, (uint256));
             
             if (invested > 0) {
-                // Emergency withdraw via delegatecall
-                bytes memory emptyData;
+                // Emergency withdraw via delegatecall using lastStrategyData or strategy address
+                bytes memory withdrawData = _lastStrategyData.length > 0 ? _lastStrategyData : abi.encode(strategy);
                 (bool emergencySuccess, ) = strategy.delegatecall(
-                    abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, emptyData)
+                    abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, withdrawData)
                 );
                 // We don't check success as this is emergency withdraw
                 // Just capture return value to avoid compiler warning
@@ -696,10 +704,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
 
     function emergencyWithdraw(uint256 amount) external override onlyOwner {
         if (amount > 0) {
-            // Emergency withdraw specific amount via delegatecall
-            bytes memory emptyData;
+            // Emergency withdraw specific amount via delegatecall using lastStrategyData or strategy address
+            bytes memory withdrawData = _lastStrategyData.length > 0 ? _lastStrategyData : abi.encode(strategy);
             (bool emergencySuccess, ) = strategy.delegatecall(
-                abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), amount, emptyData)
+                abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), amount, withdrawData)
             );
             // We don't check success as this is emergency withdraw
             // Just capture return value to avoid compiler warning
