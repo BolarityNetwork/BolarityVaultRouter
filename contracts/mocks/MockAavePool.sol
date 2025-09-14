@@ -27,17 +27,18 @@ contract MockAavePool {
         address onBehalfOf,
         uint16 /* referralCode */
     ) external {
-        // Transfer tokens from caller to this pool
-        // The caller should have approved this pool
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        // Transfer tokens from caller to the aToken contract (not this pool)
+        // This allows the aToken to properly track underlying for gain/loss simulation
+        if (aTokens[asset] != address(0)) {
+            IERC20(asset).transferFrom(msg.sender, aTokens[asset], amount);
+            MockAToken(aTokens[asset]).mint(onBehalfOf, amount);
+        } else {
+            // If no aToken configured, transfer to pool
+            IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        }
         
         // Track deposits for the beneficiary
         deposits[asset][onBehalfOf] += amount;
-        
-        // Mint aTokens if configured
-        if (aTokens[asset] != address(0)) {
-            MockAToken(aTokens[asset]).mint(onBehalfOf, amount);
-        }
     }
     
     function withdraw(
@@ -46,16 +47,31 @@ contract MockAavePool {
         address to
     ) external returns (uint256) {
         // Check and decrease the deposit balance
-        require(deposits[asset][msg.sender] >= amount, "Insufficient deposit");
-        deposits[asset][msg.sender] -= amount;
-        
-        // Burn aTokens if configured
+        // For testing purposes with gains/losses, we need to be more flexible
+        // The aToken balance is the real source of truth for what can be withdrawn
         if (aTokens[asset] != address(0)) {
-            MockAToken(aTokens[asset]).burn(msg.sender, amount);
+            // Check aToken balance instead of deposits mapping when aToken exists
+            uint256 aTokenBalance = MockAToken(aTokens[asset]).balanceOf(msg.sender);
+            require(aTokenBalance >= amount, "Insufficient aToken balance");
+            // Adjust deposits mapping to reflect the withdrawal
+            if (deposits[asset][msg.sender] > amount) {
+                deposits[asset][msg.sender] -= amount;
+            } else {
+                deposits[asset][msg.sender] = 0;
+            }
+        } else {
+            require(deposits[asset][msg.sender] >= amount, "Insufficient deposit");
+            deposits[asset][msg.sender] -= amount;
         }
         
-        // Transfer tokens back to the recipient
-        IERC20(asset).transfer(to, amount);
+        // Transfer tokens from aToken contract if configured
+        if (aTokens[asset] != address(0)) {
+            // Burn aTokens and transfer underlying
+            MockAToken(aTokens[asset]).burnAndTransfer(msg.sender, amount, to);
+        } else {
+            // Transfer tokens from pool if no aToken
+            IERC20(asset).transfer(to, amount);
+        }
         
         return amount;
     }

@@ -118,9 +118,9 @@ describe("AaveStrategy", function () {
       // Deposit to vault
       await vault.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
 
-      // Check that funds were sent to Aave pool
-      const poolBalance = await mockToken.balanceOf(mockAavePool.target);
-      expect(poolBalance).to.equal(DEPOSIT_AMOUNT);
+      // Check that funds were sent to aToken contract
+      const aTokenBalance = await mockToken.balanceOf(mockAToken.target);
+      expect(aTokenBalance).to.equal(DEPOSIT_AMOUNT);
 
       // Check vault has no idle funds
       const vaultBalance = await mockToken.balanceOf(vault.target);
@@ -139,9 +139,9 @@ describe("AaveStrategy", function () {
       const userBalance = await mockToken.balanceOf(user.address);
       expect(userBalance).to.equal(INITIAL_BALANCE - DEPOSIT_AMOUNT + withdrawAmount);
 
-      // Check pool balance decreased
-      const poolBalance = await mockToken.balanceOf(mockAavePool.target);
-      expect(poolBalance).to.equal(DEPOSIT_AMOUNT - withdrawAmount);
+      // Check aToken balance decreased
+      const aTokenBalance = await mockToken.balanceOf(mockAToken.target);
+      expect(aTokenBalance).to.equal(DEPOSIT_AMOUNT - withdrawAmount);
     });
 
     it("Should handle multiple deposits and withdrawals", async function () {
@@ -152,16 +152,16 @@ describe("AaveStrategy", function () {
       await vault.connect(user).deposit(deposit1, user.address);
       await vault.connect(user).deposit(deposit2, user.address);
 
-      // Check total in pool
-      let poolBalance = await mockToken.balanceOf(mockAavePool.target);
-      expect(poolBalance).to.equal(deposit1 + deposit2);
+      // Check total in aToken
+      let aTokenBalance = await mockToken.balanceOf(mockAToken.target);
+      expect(aTokenBalance).to.equal(deposit1 + deposit2);
 
       // Withdraw some
       const withdraw1 = ethers.parseEther("200");
       await vault.connect(user).withdraw(withdraw1, user.address, user.address);
 
-      poolBalance = await mockToken.balanceOf(mockAavePool.target);
-      expect(poolBalance).to.equal(deposit1 + deposit2 - withdraw1);
+      aTokenBalance = await mockToken.balanceOf(mockAToken.target);
+      expect(aTokenBalance).to.equal(deposit1 + deposit2 - withdraw1);
     });
 
     it("Should handle emergency withdraw", async function () {
@@ -175,9 +175,9 @@ describe("AaveStrategy", function () {
       const vaultBalance = await mockToken.balanceOf(vault.target);
       expect(vaultBalance).to.equal(DEPOSIT_AMOUNT);
 
-      // Check pool balance is zero
-      const poolBalance = await mockToken.balanceOf(mockAavePool.target);
-      expect(poolBalance).to.equal(0);
+      // Check aToken balance is zero
+      const aTokenBalance = await mockToken.balanceOf(mockAToken.target);
+      expect(aTokenBalance).to.equal(0);
     });
   });
 

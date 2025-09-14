@@ -16,6 +16,10 @@ contract MockComet {
     uint256 public totalSupply;
     uint256 public totalBorrow;
     
+    // Track all depositors for testing purposes
+    address[] public depositors;
+    mapping(address => bool) public isDepositor;
+    
     // Interest rate model parameters (simplified)
     uint256 public constant SUPPLY_RATE = 5e15; // 0.5% APR simplified
     uint256 public lastAccrualTime;
@@ -32,6 +36,12 @@ contract MockComet {
         
         // Transfer tokens from sender
         IERC20(baseToken).safeTransferFrom(msg.sender, address(this), amount);
+        
+        // Track depositor
+        if (!isDepositor[msg.sender]) {
+            isDepositor[msg.sender] = true;
+            depositors.push(msg.sender);
+        }
         
         // Update balance
         balanceOf[msg.sender] += amount;
@@ -158,6 +168,22 @@ contract MockComet {
             // In real implementation, this would update each user's balance
             // For testing, we just reset accumulated interest
             accumulatedInterest = 0;
+        }
+    }
+    
+    // Function to simulate appreciation by directly increasing balances (for testing)
+    function simulateAppreciation(uint256 percentIncrease) external {
+        // For testing, increase the balance of all depositors
+        // This simulates yield earned on the deposited funds
+        for (uint i = 0; i < depositors.length; i++) {
+            address depositor = depositors[i];
+            if (balanceOf[depositor] > 0) {
+                uint256 appreciation = (balanceOf[depositor] * percentIncrease) / 100;
+                balanceOf[depositor] += appreciation;
+                // Need tokens to back this appreciation
+                // In real Compound, this would come from borrowers' interest
+                // For testing, we'll just increase the balance
+            }
         }
     }
 }

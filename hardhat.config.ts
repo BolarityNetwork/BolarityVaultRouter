@@ -29,9 +29,26 @@ const config: HardhatUserConfig = {
               process.env.PRIVATE!,
           ]
     },
+    hoodi: {
+          url: process.env.EVM_RPC!,
+          chainId: 560048,
+          accounts: [
+              process.env.PRIVATE!,
+          ]
+    },
   },
   etherscan: {
     apiKey: process.env.API_KEY!,
+    customChains: [
+      {
+        network: "hoodi",
+        chainId: 560048,
+        urls: {
+          apiURL: "https://api-hoodi.etherscan.io/api",
+          browserURL: "https://hoodi.etherscan.io/"
+        }
+      }
+    ]
   }
 };
 

@@ -261,8 +261,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             lastP = PRECISION;
         }
         
-        // Step 1: Pre-action fee crystallization
-        _accruePerfFee();
+        // Step 1: Pre-action fee crystallization (skip if sender is feeCollector to avoid circular fee generation)
+        if (msg.sender != feeCollector) {
+            _accruePerfFee();
+        }
         
         // Step 2: Snapshot baseline after crystallization
         uint256 A0 = totalAssets();
@@ -290,8 +292,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         assets = previewMint(shares);
         require(assets > 0, "BolarityVault: Zero assets");
         
-        // Step 1: Pre-action fee crystallization
-        _accruePerfFee();
+        // Step 1: Pre-action fee crystallization (skip if sender is feeCollector to avoid circular fee generation)
+        if (msg.sender != feeCollector) {
+            _accruePerfFee();
+        }
         
         // Step 2: Snapshot baseline after crystallization
         uint256 A0 = totalAssets();
@@ -323,8 +327,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             shares = balanceOf(owner);
             require(shares > 0, "BolarityVault: Zero shares");
             
-            // Step 1: Pre-action fee crystallization
-            _accruePerfFee();
+            // Step 1: Pre-action fee crystallization (skip if owner is feeCollector)
+            if (owner != feeCollector) {
+                _accruePerfFee();
+            }
             
             // Calculate assets using convertToAssets (handles the calculation properly)
             assets = convertToAssets(shares);
@@ -335,8 +341,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             // Calculate shares needed BEFORE fee crystallization for accurate preview
             shares = previewWithdraw(assets);
             
-            // Step 1: Pre-action fee crystallization
-            _accruePerfFee();
+            // Step 1: Pre-action fee crystallization (skip if owner is feeCollector)
+            if (owner != feeCollector) {
+                _accruePerfFee();
+            }
         }
         
         // Check allowance if not owner
@@ -388,8 +396,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             require(shares > 0, "BolarityVault: Zero shares");
         }
         
-        // Step 1: Pre-action fee crystallization
-        _accruePerfFee();
+        // Step 1: Pre-action fee crystallization (skip if owner is feeCollector)
+        if (owner != feeCollector) {
+            _accruePerfFee();
+        }
         
         // Check allowance if not owner
         if (msg.sender != owner) {
@@ -475,7 +485,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 P1 = (A * PRECISION) / S;
 
         if (P1 <= P0) {
-            lastP = P1;
+            // Don't update lastP on loss to maintain high water mark
             return 0;
         }
 
@@ -576,9 +586,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Mint shares to receiver
         _mint(receiver, shares);
         
-        // Update lastP to avoid double-charging
+        // Update lastP only if it's higher (maintain high water mark)
         if (totalSupply() > 0) {
-            lastP = (totalAssets() * PRECISION) / totalSupply();
+            uint256 newP = (totalAssets() * PRECISION) / totalSupply();
+            if (newP > lastP) {
+                lastP = newP;
+            }
         }
         
         emit Invested(strategy, toInvest);
@@ -616,8 +629,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
                     uint256 feeShares = (feeAssetsOnExit * S0) / A0;
                     if (feeShares > 0) {
                         _mint(feeCollector, feeShares);
-                        // Update lastP to avoid double-charging
-                        lastP = (totalAssets() * PRECISION) / totalSupply();
+                        // Update lastP only if it's higher (maintain high water mark)
+                        uint256 newP = (totalAssets() * PRECISION) / totalSupply();
+                        if (newP > lastP) {
+                            lastP = newP;
+                        }
                     }
                 }
             }
