@@ -22,9 +22,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     uint256 public constant FEE_BPS_MAX = 3000;
     uint256 public constant BPS_DIVISOR = 10000;
     uint256 public constant PRECISION = 1e18;
-    
-    bytes private _pendingStrategyData;
-    bytes private _lastStrategyData; // Store last used strategy data for totalUnderlying calculations
 
     bool private _initialized;
     
@@ -232,7 +229,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Simulate pre-action fee crystallization
         (uint256 simulatedTotalAssets, uint256 simulatedTotalSupply) = _simulateAccruePerfFee();
         
-        if (simulatedTotalSupply == 0) {
+        if (simulatedTotalSupply == 0 || simulatedTotalAssets == 0) {
             return assets;
         }
         
@@ -244,7 +241,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Simulate pre-action fee crystallization
         (uint256 simulatedTotalAssets, uint256 simulatedTotalSupply) = _simulateAccruePerfFee();
         
-        if (simulatedTotalSupply == 0) {
+        if (simulatedTotalSupply == 0 || simulatedTotalAssets == 0) {
             return shares;
         }
         
@@ -253,6 +250,14 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     function deposit(uint256 assets, address receiver) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+        return _depositWithData(assets, receiver, "");
+    }
+    
+    function depositWithData(uint256 assets, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+        return _depositWithData(assets, receiver, strategyData);
+    }
+    
+    function _depositWithData(uint256 assets, address receiver, bytes memory strategyData) internal returns (uint256 shares) {
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         require(assets > 0, "BolarityVault: Zero assets");
         
@@ -274,12 +279,20 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         
         // Step 4: Execute strategy investment
-        shares = _executeDeposit(assets, receiver, A0, S0);
+        shares = _executeDeposit(assets, receiver, A0, S0, strategyData);
         
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
     function mint(uint256 shares, address receiver) public override nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+        return _mintWithData(shares, receiver, "");
+    }
+    
+    function mintWithData(uint256 shares, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+        return _mintWithData(shares, receiver, strategyData);
+    }
+    
+    function _mintWithData(uint256 shares, address receiver, bytes memory strategyData) internal returns (uint256 assets) {
         require(shares > 0, "BolarityVault: Zero shares");
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
@@ -305,7 +318,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         
         // Step 4: Execute strategy investment and mint shares
-        uint256 actualShares = _executeDeposit(assets, receiver, A0, S0);
+        uint256 actualShares = _executeDeposit(assets, receiver, A0, S0, strategyData);
         require(actualShares >= shares, "BolarityVault: Insufficient shares minted");
         
         emit Deposit(msg.sender, receiver, assets, shares);
@@ -316,6 +329,24 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner
     ) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+        return _withdrawWithData(assets, receiver, owner, "");
+    }
+    
+    function withdrawWithData(
+        uint256 assets,
+        address receiver,
+        address owner,
+        bytes memory strategyData
+    ) public nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+        return _withdrawWithData(assets, receiver, owner, strategyData);
+    }
+    
+    function _withdrawWithData(
+        uint256 assets,
+        address receiver,
+        address owner,
+        bytes memory strategyData
+    ) internal returns (uint256 shares) {
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
         // Handle max withdrawal: if assets == type(uint256).max, withdraw all
@@ -334,7 +365,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             
             // Calculate assets using convertToAssets (handles the calculation properly)
             assets = convertToAssets(shares);
-            require(assets > 0, "BolarityVault: Zero assets");
+            // For max withdrawal, allow withdrawal even if assets is 0 (user might be withdrawing 0 value shares)
+            // The actual withdrawal will handle if there are no assets to transfer
         } else {
             require(assets > 0, "BolarityVault: Zero assets");
             
@@ -357,7 +389,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         }
         
         // Execute withdrawal from strategy if needed
-        _executeWithdraw(assets);
+        _executeWithdraw(assets, strategyData);
         
         // Check balance after withdrawal from strategy
         uint256 balance = _asset.balanceOf(address(this));
@@ -386,6 +418,24 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner
     ) public override nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+        return _redeemWithData(shares, receiver, owner, "");
+    }
+    
+    function redeemWithData(
+        uint256 shares,
+        address receiver,
+        address owner,
+        bytes memory strategyData
+    ) public nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+        return _redeemWithData(shares, receiver, owner, strategyData);
+    }
+    
+    function _redeemWithData(
+        uint256 shares,
+        address receiver,
+        address owner,
+        bytes memory strategyData
+    ) internal returns (uint256 assets) {
         require(receiver != address(0), "BolarityVault: Invalid receiver");
         
         // Handle max redeem: if shares == type(uint256).max, redeem all shares
@@ -423,7 +473,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(assets > 0, "BolarityVault: Zero assets");
         
         // Execute withdrawal from strategy if needed
-        _executeWithdraw(assets);
+        _executeWithdraw(assets, strategyData);
         
         // Check balance after withdrawal from strategy
         uint256 balance = _asset.balanceOf(address(this));
@@ -512,40 +562,30 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         router = newRouter;
         emit RouterUpdated(newRouter);
     }
-    
-    function setStrategyCallData(bytes calldata data) external override {
-        require(msg.sender == router, "BolarityVault: Not router");
-        _pendingStrategyData = data;
-    }
-    
-    function _consumeStrategyCallData() internal returns (bytes memory data) {
-        data = _pendingStrategyData;
-        if (data.length > 0) {
-            _lastStrategyData = data; // Store for totalUnderlying calculations
-        }
-        delete _pendingStrategyData;
-    }
 
     function crystallizeFees() external {
         _accruePerfFee();
     }
-    
-    function lastStrategyData() external view returns (bytes memory) {
-        return _lastStrategyData;
-    }
 
-    function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0) internal returns (uint256 shares) {
+    function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0, bytes memory strategyData) internal returns (uint256 shares) {
         uint256 toInvest = assets;
-        
-        // Get and consume strategy data
-        bytes memory data = _consumeStrategyCallData();
         
         // Execute strategy via delegatecall
         (bool success, bytes memory returnData) = strategy.delegatecall(
-            abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, data)
+            abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, strategyData)
         );
         
-        require(success, "BolarityVault: Strategy invest failed");
+        if (!success) {
+            // Forward the actual revert reason from the strategy
+            if (returnData.length > 0) {
+                assembly {
+                    let returnDataSize := mload(returnData)
+                    revert(add(32, returnData), returnDataSize)
+                }
+            } else {
+                revert("BolarityVault: Strategy invest failed");
+            }
+        }
         require(returnData.length >= 64, "BolarityVault: Invalid return data");
         
         // Decode return values: (accounted, entryGain)
@@ -566,8 +606,14 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
                 shares = netAccounted;
             } else {
                 // Subsequent deposits - calculate proportionally
-                feeShares = (feeAssetsOnEntry * S0) / A0;
-                shares = (netAccounted * S0) / A0;
+                // Prevent division by zero
+                if (A0 == 0) {
+                    feeShares = feeAssetsOnEntry;
+                    shares = netAccounted;
+                } else {
+                    feeShares = (feeAssetsOnEntry * S0) / A0;
+                    shares = (netAccounted * S0) / A0;
+                }
             }
             
             // Mint fee shares if any
@@ -576,7 +622,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             }
         } else {
             // No entry gain or no performance fee
-            if (S0 == 0) {
+            if (S0 == 0 || A0 == 0) {
                 shares = accounted;
             } else {
                 shares = (accounted * S0) / A0;
@@ -599,18 +645,15 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         return shares;
     }
 
-    function _executeWithdraw(uint256 assets) internal {
+    function _executeWithdraw(uint256 assets, bytes memory strategyData) internal {
         uint256 idle = _asset.balanceOf(address(this));
         
         if (idle < assets) {
             uint256 toWithdraw = assets - idle;
             
-            // Get and consume strategy data
-            bytes memory data = _consumeStrategyCallData();
-            
             // Execute strategy via delegatecall
             (bool success, bytes memory returnData) = strategy.delegatecall(
-                abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, data)
+                abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, strategyData)
             );
             
             require(success, "BolarityVault: Strategy divest failed");

@@ -47,6 +47,14 @@ contract MockPendleRouter {
     // Simulate PT trading with discount (e.g., 100 USDC -> 108 PT)
     uint256 public constant PT_DISCOUNT_RATE = 108; // 8% discount
     
+    // Mapping from market to PT token
+    mapping(address => address) public marketToPT;
+    
+    // Function to set market to PT mapping for testing
+    function setMarketToPT(address market, address pt) external {
+        marketToPT[market] = pt;
+    }
+    
     enum SwapType {
         NONE,
         KYBERSWAP,
@@ -85,8 +93,25 @@ contract MockPendleRouter {
         SwapData swapData;
     }
     
+    struct Order {
+        uint256 salt;
+        uint256 expiry;
+        uint256 nonce;
+        uint8 orderType;
+        address token;
+        address YT;
+        address maker;
+        address receiver;
+        uint256 makingAmount;
+        uint256 lnImpliedRate;
+        uint256 failSafeRate;
+        bytes permit;
+    }
+    
     struct FillOrderParams {
-        bytes data;
+        Order order;
+        bytes signature;
+        uint256 makingAmount;
     }
     
     struct LimitOrderData {
@@ -113,8 +138,13 @@ contract MockPendleRouter {
         
         require(netPtOut >= minPtOut, "MockPendleRouter: Insufficient PT output");
         
-        // Mint PT tokens to receiver
-        MockPendlePT pt = MockPendlePT(input.tokenMintSy);
+        // Get the PT token associated with this market
+        // In the test, market is not used, but we have the mapping
+        // For simplicity, we'll get PT from the marketToPT mapping
+        address ptAddress = marketToPT[market];
+        require(ptAddress != address(0), "MockPendleRouter: PT not found for market");
+        
+        MockPendlePT pt = MockPendlePT(ptAddress);
         pt.mint(receiver, netPtOut);
         
         netSyFee = 0;
@@ -128,15 +158,21 @@ contract MockPendleRouter {
         TokenOutput memory output,
         LimitOrderData memory limit
     ) external returns (uint256 netTokenOut, uint256 netSyFee, uint256 netSyInterm) {
-        MockPendlePT pt = MockPendlePT(output.tokenRedeemSy);
+        // Get PT address from market
+        address ptAddress = marketToPT[market];
+        require(ptAddress != address(0), "MockPendleRouter: PT not found for market");
+        MockPendlePT pt = MockPendlePT(ptAddress);
         
         // Transfer PT tokens from caller
-        IERC20(output.tokenRedeemSy).safeTransferFrom(msg.sender, address(this), exactPtIn);
+        IERC20(ptAddress).safeTransferFrom(msg.sender, address(this), exactPtIn);
         
         // Calculate underlying output (reverse of discount)
         netTokenOut = (exactPtIn * 100) / PT_DISCOUNT_RATE;
         
         require(netTokenOut >= output.minTokenOut, "MockPendleRouter: Insufficient output");
+        
+        // Verify tokenRedeemSy is the expected asset (underlying)
+        require(output.tokenRedeemSy == pt.underlying(), "MockPendleRouter: Invalid tokenRedeemSy");
         
         // Get the underlying token and mint to receiver
         address underlying = pt.underlying();

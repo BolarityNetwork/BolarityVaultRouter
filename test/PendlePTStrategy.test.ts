@@ -87,22 +87,64 @@ describe("PendlePTStrategy", function () {
     });
   });
 
+  describe("Strategy Configuration", function () {
+    it("Should allow owner to set Pendle market", async function () {
+      const marketAddress = ethers.Wallet.createRandom().address;
+      
+      await strategy.connect(owner).setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      const [market, pt] = await strategy.pendleMarkets(mockToken.target);
+      expect(market).to.equal(marketAddress);
+      expect(pt).to.equal(mockPT.target);
+    });
+
+    it("Should revert when non-owner tries to set market", async function () {
+      const marketAddress = ethers.Wallet.createRandom().address;
+      
+      await expect(
+        strategy.connect(user1).setPendleMarket(mockToken.target, marketAddress, mockPT.target)
+      ).to.be.revertedWithCustomError(strategy, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should revert when setting expired PT", async function () {
+      const marketAddress = ethers.Wallet.createRandom().address;
+      await mockPT.setExpired(true);
+      
+      await expect(
+        strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target)
+      ).to.be.revertedWith("PendlePTStrategy: PT expired");
+    });
+
+    it("Should allow owner to remove Pendle market", async function () {
+      const marketAddress = ethers.Wallet.createRandom().address;
+      
+      // First set a market
+      await strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      // Then remove it
+      await strategy.removePendleMarket(mockToken.target);
+      
+      const [market, pt] = await strategy.pendleMarkets(mockToken.target);
+      expect(market).to.equal(ethers.ZeroAddress);
+      expect(pt).to.equal(ethers.ZeroAddress);
+    });
+  });
+
   describe("Investment via Vault with Entry Gain", function () {
-    it("Should invest in Pendle PT with entry gain", async function () {
-      // Encode market and PT addresses for strategy data
+    beforeEach(async function () {
+      // Configure strategy with market and PT for mockToken
       const marketAddress = ethers.Wallet.createRandom().address; // Mock market address
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
+      await strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      // Configure the mock Pendle router to know about the market -> PT mapping
+      await mockPendleRouter.setMarketToPT(marketAddress, mockPT.target);
+    });
 
-      // Set strategy data before deposit
-      await vault.setStrategyCallData(strategyData);
-
+    it("Should invest in Pendle PT with entry gain", async function () {
       // Get fee collector balance before
       const feeBalanceBefore = await vault.balanceOf(feeCollector.address);
 
-      // Deposit to vault
+      // Deposit to vault (no strategy data needed now)
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       // Calculate expected entry gain (8% of deposit)
@@ -123,18 +165,10 @@ describe("PendlePTStrategy", function () {
     });
 
     it("Should handle multiple deposits with entry gains", async function () {
-      const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-
       // First deposit
-      await vault.setStrategyCallData(strategyData);
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       // Second deposit
-      await vault.setStrategyCallData(strategyData);
       await vault.connect(user2).deposit(DEPOSIT_AMOUNT * 2n, user2.address);
 
       // Both users should have shares including entry gains
@@ -148,28 +182,22 @@ describe("PendlePTStrategy", function () {
 
   describe("Withdrawal from Pendle PT", function () {
     beforeEach(async function () {
-      // Setup initial deposit
+      // Configure strategy with market and PT for mockToken
       const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-      await vault.setStrategyCallData(strategyData);
+      await strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      // Configure the mock Pendle router to know about the market -> PT mapping
+      await mockPendleRouter.setMarketToPT(marketAddress, mockPT.target);
+      
+      // Setup initial deposit
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
     });
 
     it("Should withdraw from Pendle PT through vault", async function () {
-      const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-
       const withdrawAmount = ethers.parseEther("500");
       const tokenBalanceBefore = await mockToken.balanceOf(user1.address);
 
-      // Set strategy data for withdrawal
-      await vault.setStrategyCallData(strategyData);
+      // Withdraw (no strategy data needed now)
       await vault.connect(user1).withdraw(withdrawAmount, user1.address, user1.address);
 
       const tokenBalanceAfter = await mockToken.balanceOf(user1.address);
@@ -177,13 +205,7 @@ describe("PendlePTStrategy", function () {
     });
 
     it("Should withdraw all assets using max uint", async function () {
-      const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-
-      await vault.setStrategyCallData(strategyData);
+      // Withdraw all (no strategy data needed now)
       await vault.connect(user1).withdraw(ethers.MaxUint256, user1.address, user1.address);
 
       expect(await vault.balanceOf(user1.address)).to.equal(0);
@@ -192,50 +214,36 @@ describe("PendlePTStrategy", function () {
 
   describe("Error Cases", function () {
     it("Should revert with expired PT", async function () {
+      // Configure strategy with expired PT
+      const marketAddress = ethers.Wallet.createRandom().address;
+      
       // Set PT as expired
       await mockPT.setExpired(true);
-
-      const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-
-      await vault.setStrategyCallData(strategyData);
       
+      // This should fail when trying to configure
       await expect(
-        vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)
-      ).to.be.revertedWith("BolarityVault: Strategy invest failed");
+        strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target)
+      ).to.be.revertedWith("PendlePTStrategy: PT expired");
     });
 
-    it("Should revert with invalid addresses in data", async function () {
-      const invalidData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [ethers.ZeroAddress, ethers.ZeroAddress]
-      );
-
-      await vault.setStrategyCallData(invalidData);
-      
+    it("Should revert when asset not configured", async function () {
+      // Try to deposit without configuring the strategy first
       await expect(
         vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)
-      ).to.be.revertedWith("BolarityVault: Strategy invest failed");
-    });
-
-    it("Should revert with insufficient data length", async function () {
-      const invalidData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address"],
-        [ethers.Wallet.createRandom().address]
-      );
-
-      await vault.setStrategyCallData(invalidData);
-      
-      await expect(
-        vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)
-      ).to.be.revertedWith("BolarityVault: Strategy invest failed");
+      ).to.be.revertedWith("PendlePTStrategy: Market not configured for asset. Call setPendleMarket() first");
     });
   });
 
   describe("Preview Functions with Entry Gain", function () {
+    beforeEach(async function () {
+      // Configure strategy with market and PT for mockToken
+      const marketAddress = ethers.Wallet.createRandom().address;
+      await strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      // Configure the mock Pendle router to know about the market -> PT mapping
+      await mockPendleRouter.setMarketToPT(marketAddress, mockPT.target);
+    });
+
     it("Should correctly preview deposit with entry gain", async function () {
       // Since strategy returns entry gain, preview should show more shares than input
       const previewShares = await vault.previewDeposit(DEPOSIT_AMOUNT);
@@ -246,12 +254,7 @@ describe("PendlePTStrategy", function () {
     });
 
     it("Should correctly preview withdraw after deposit with entry gain", async function () {
-      const marketAddress = ethers.Wallet.createRandom().address;
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
-      await vault.setStrategyCallData(strategyData);
+      // Deposit first
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       const withdrawAmount = ethers.parseEther("500");
@@ -268,12 +271,13 @@ describe("PendlePTStrategy", function () {
       // Set custom PT rate in oracle
       await mockPendleOracle.setPtToAssetRate(marketAddress, ethers.parseEther("0.95"));
 
-      const strategyData = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address"],
-        [marketAddress, mockPT.target]
-      );
+      // Configure strategy with market and PT
+      await strategy.setPendleMarket(mockToken.target, marketAddress, mockPT.target);
+      
+      // Configure the mock Pendle router to know about the market -> PT mapping
+      await mockPendleRouter.setMarketToPT(marketAddress, mockPT.target);
 
-      await vault.setStrategyCallData(strategyData);
+      // Deposit without needing strategy data
       await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
 
       // Verify deposit succeeded with oracle pricing

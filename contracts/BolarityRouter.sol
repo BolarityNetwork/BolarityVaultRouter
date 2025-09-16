@@ -64,17 +64,12 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 shares) {
         address vault = _getVault(asset, market);
         
-        // Set strategy call data if provided
-        if (data.length > 0) {
-            IBolarityVault(vault).setStrategyCallData(data);
-        }
-        
         // Transfer tokens to router first, then approve vault
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
         IERC20(asset).safeIncreaseAllowance(vault, assets);
         
-        // Call deposit on vault
-        shares = IBolarityVault(vault).deposit(assets, receiver);
+        // Call depositWithData on vault
+        shares = IBolarityVault(vault).depositWithData(assets, receiver, data);
         
         emit Deposited(asset, market, receiver, assets, shares);
     }
@@ -89,15 +84,10 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 shares) {
         address vault = _getVault(asset, market);
         
-        // Set strategy call data if provided
-        if (data.length > 0) {
-            IBolarityVault(vault).setStrategyCallData(data);
-        }
-        
-        // Call withdraw with the owner parameter
+        // Call withdrawWithData with the owner parameter
         // If owner == msg.sender, user withdraws their own shares
         // If owner != msg.sender, requires owner's approval to the router
-        shares = IBolarityVault(vault).withdraw(assets, receiver, owner);
+        shares = IBolarityVault(vault).withdrawWithData(assets, receiver, owner, data);
         
         emit Withdrawn(asset, market, receiver, assets, shares);
     }
@@ -111,11 +101,6 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
         
-        // Set strategy call data if provided
-        if (data.length > 0) {
-            IBolarityVault(vault).setStrategyCallData(data);
-        }
-        
         // Get required assets for shares
         assets = IBolarityVault(vault).previewMint(shares);
         
@@ -123,8 +108,8 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
         IERC20(asset).safeIncreaseAllowance(vault, assets);
         
-        // Call mint on vault
-        uint256 actualAssets = IBolarityVault(vault).mint(shares, receiver);
+        // Call mintWithData on vault
+        uint256 actualAssets = IBolarityVault(vault).mintWithData(shares, receiver, data);
         require(actualAssets <= assets, "BolarityRouter: Slippage");
         
         emit Deposited(asset, market, receiver, actualAssets, shares);
@@ -141,15 +126,10 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
         
-        // Set strategy call data if provided
-        if (data.length > 0) {
-            IBolarityVault(vault).setStrategyCallData(data);
-        }
-        
-        // Call redeem with the owner parameter
+        // Call redeemWithData with the owner parameter
         // If owner == msg.sender, user redeems their own shares
         // If owner != msg.sender, requires owner's approval to the router
-        assets = IBolarityVault(vault).redeem(shares, receiver, owner);
+        assets = IBolarityVault(vault).redeemWithData(shares, receiver, owner, data);
         
         emit Redeemed(asset, market, receiver, shares, assets);
     }
@@ -246,24 +226,32 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
         address receiver,
         address owner
     ) external nonReentrant whenNotPaused {
+        uint256 length = assets.length;
         require(
-            assets.length == markets.length && assets.length == amounts.length,
+            length == markets.length && length == amounts.length,
             "BolarityRouter: Array length mismatch"
         );
         
-        for (uint256 i = 0; i < assets.length; i++) {
+        // Cache msg.sender to avoid multiple CALLER opcodes
+        address sender = msg.sender;
+        bool isOwner = owner == sender;
+        
+        // Use unchecked for loop index increment to save gas
+        for (uint256 i; i < length; ) {
             address vault = _getVault(assets[i], markets[i]);
             
-            uint256 shares;
-            // If owner == msg.sender, withdraw directly
-            // Otherwise requires approval
-            if (owner == msg.sender) {
-                shares = IBolarityVault(vault).withdraw(amounts[i], receiver, msg.sender);
-            } else {
-                shares = IBolarityVault(vault).withdraw(amounts[i], receiver, owner);
-            }
+            // Avoid conditional branching by directly passing the correct owner
+            uint256 shares = IBolarityVault(vault).withdraw(
+                amounts[i], 
+                receiver, 
+                isOwner ? sender : owner
+            );
             
             emit Withdrawn(assets[i], markets[i], receiver, amounts[i], shares);
+            
+            unchecked {
+                ++i;
+            }
         }
     }
 

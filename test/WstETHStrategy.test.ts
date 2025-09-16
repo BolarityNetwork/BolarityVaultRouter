@@ -73,11 +73,9 @@ describe("WstETHStrategy", function () {
     it("Should wrap stETH to wstETH through vault deposit", async function () {
       // No strategy data needed for wstETH
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-
-      // Deposit to vault
+      // Deposit to vault with strategy data
       const sharesBefore = await vault.balanceOf(user1.address);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
       const sharesAfter = await vault.balanceOf(user1.address);
 
       // Check shares minted (should equal deposit amount as no entry gain)
@@ -95,12 +93,10 @@ describe("WstETHStrategy", function () {
       const strategyData = "0x";
 
       // First deposit
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
 
       // Second deposit
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user2).deposit(DEPOSIT_AMOUNT * 2n, user2.address);
+      await vault.connect(user2).depositWithData(DEPOSIT_AMOUNT * 2n, user2.address, strategyData);
 
       // Check balances (should equal deposits as no entry gain)
       expect(await vault.balanceOf(user1.address)).to.equal(DEPOSIT_AMOUNT);
@@ -119,8 +115,7 @@ describe("WstETHStrategy", function () {
     beforeEach(async function () {
       // Setup initial deposit
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
     });
 
     it("Should unwrap wstETH to stETH through vault withdrawal", async function () {
@@ -128,9 +123,8 @@ describe("WstETHStrategy", function () {
       const withdrawAmount = ethers.parseEther("5");
       const stETHBalanceBefore = await mockStETH.balanceOf(user1.address);
 
-      // Set strategy data for withdrawal
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).withdraw(withdrawAmount, user1.address, user1.address);
+      // Withdraw with strategy data
+      await vault.connect(user1).withdrawWithData(withdrawAmount, user1.address, user1.address, strategyData);
 
       const stETHBalanceAfter = await mockStETH.balanceOf(user1.address);
       expect(stETHBalanceAfter - stETHBalanceBefore).to.equal(withdrawAmount);
@@ -146,10 +140,9 @@ describe("WstETHStrategy", function () {
 
       // User should be able to withdraw more than deposited
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
       
       const stETHBalanceBefore = await mockStETH.balanceOf(user1.address);
-      await vault.connect(user1).withdraw(ethers.MaxUint256, user1.address, user1.address);
+      await vault.connect(user1).withdrawWithData(ethers.MaxUint256, user1.address, user1.address, strategyData);
       const stETHBalanceAfter = await mockStETH.balanceOf(user1.address);
       
       const withdrawn = stETHBalanceAfter - stETHBalanceBefore;
@@ -158,8 +151,7 @@ describe("WstETHStrategy", function () {
 
     it("Should withdraw all assets using max uint", async function () {
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).withdraw(ethers.MaxUint256, user1.address, user1.address);
+      await vault.connect(user1).withdrawWithData(ethers.MaxUint256, user1.address, user1.address, strategyData);
 
       expect(await vault.balanceOf(user1.address)).to.equal(0);
       expect(await mockWstETH.balanceOf(vault.target)).to.equal(0);
@@ -169,8 +161,7 @@ describe("WstETHStrategy", function () {
   describe("Redeem Functionality", function () {
     beforeEach(async function () {
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
     });
 
     it("Should redeem shares for stETH", async function () {
@@ -178,8 +169,7 @@ describe("WstETHStrategy", function () {
       const stETHBalanceBefore = await mockStETH.balanceOf(user1.address);
 
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).redeem(shares, user1.address, user1.address);
+      await vault.connect(user1).redeemWithData(shares, user1.address, user1.address, strategyData);
 
       expect(await vault.balanceOf(user1.address)).to.equal(0);
       const stETHBalanceAfter = await mockStETH.balanceOf(user1.address);
@@ -210,7 +200,7 @@ describe("WstETHStrategy", function () {
 
       await expect(
         wrongVault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)
-      ).to.be.revertedWith("BolarityVault: Strategy invest failed");
+      ).to.be.revertedWith("WstETHStrategy: Asset must be stETH");
     });
   });
 
@@ -230,8 +220,7 @@ describe("WstETHStrategy", function () {
 
     it("Should correctly preview withdraw after deposit", async function () {
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
 
       const withdrawAmount = ethers.parseEther("5");
       const previewShares = await vault.previewWithdraw(withdrawAmount);
@@ -240,8 +229,7 @@ describe("WstETHStrategy", function () {
 
     it("Should correctly preview redeem after deposit", async function () {
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
 
       const shares = ethers.parseEther("5");
       const previewAssets = await vault.previewRedeem(shares);
@@ -252,8 +240,7 @@ describe("WstETHStrategy", function () {
   describe("Total Assets Calculation", function () {
     it("Should correctly calculate total assets with wstETH", async function () {
       const strategyData = "0x";
-      await vault.setStrategyCallData(strategyData);
-      await vault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address);
+      await vault.connect(user1).depositWithData(DEPOSIT_AMOUNT, user1.address, strategyData);
 
       const totalAssets = await vault.totalAssets();
       expect(totalAssets).to.equal(DEPOSIT_AMOUNT);
