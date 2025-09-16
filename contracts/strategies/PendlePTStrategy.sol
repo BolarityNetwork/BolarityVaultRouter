@@ -14,6 +14,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * The storage variables (pendleMarkets mapping) are only used for configuration management
  * When called via delegatecall, it uses staticcall to read its own storage
  * According to design.md: Pendle PT is a zero-coupon bond with entry gain
+ * 
+ * Optimizations:
+ * - Helper functions for common operations (_getDefaultSwapData, _getDefaultLimitOrderData)
+ * - Unified slippage calculation (_calculateMinOutput)
+ * - Reduced code duplication across invest/divest/emergency functions
  */
 contract PendlePTStrategy is IStrategy, Ownable {
     using SafeERC20 for IERC20;
@@ -120,6 +125,70 @@ contract PendlePTStrategy is IStrategy, Ownable {
     }
     
     /**
+     * @notice Create default SwapData structure
+     * @return SwapData with no external swap
+     */
+    function _getDefaultSwapData() private pure returns (IPendleRouter.SwapData memory) {
+        return IPendleRouter.SwapData({
+            swapType: IPendleRouter.SwapType.NONE,
+            extRouter: address(0),
+            extCalldata: "",
+            needScale: false
+        });
+    }
+    
+    /**
+     * @notice Create default LimitOrderData structure
+     * @return LimitOrderData with no limit orders
+     */
+    function _getDefaultLimitOrderData() private pure returns (IPendleRouter.LimitOrderData memory) {
+        return IPendleRouter.LimitOrderData({
+            limitRouter: address(0),
+            epsSkipMarket: 0,
+            normalFills: new IPendleRouter.FillOrderParams[](0),
+            flashFills: new IPendleRouter.FillOrderParams[](0),
+            optData: ""
+        });
+    }
+    
+    /**
+     * @notice Calculate minimum output based on oracle rate
+     * @param market The Pendle market address
+     * @param amount The input amount
+     * @param isForPt True if calculating for PT output, false for asset output
+     * @param slippageBps Slippage in basis points (e.g., 200 = 2%)
+     * @return minOutput The minimum acceptable output amount
+     */
+    function _calculateMinOutput(
+        address market,
+        uint256 amount,
+        bool isForPt,
+        uint256 slippageBps
+    ) private view returns (uint256 minOutput) {
+        try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 ptRate) {
+            if (ptRate > 0 && ptRate <= 1e18) {
+                uint256 expected;
+                if (isForPt) {
+                    // Calculate expected PT from asset amount
+                    expected = (amount * 1e18) / ptRate;
+                } else {
+                    // Calculate expected asset from PT amount
+                    expected = (amount * ptRate) / 1e18;
+                }
+                // Apply slippage tolerance
+                minOutput = (expected * (10000 - slippageBps)) / 10000;
+                return minOutput;
+            }
+        } catch {
+            // Oracle failed, use fallback
+        }
+        
+        // Fallback: conservative minimum
+        uint256 fallbackBps = isForPt ? 9500 : 9000; // 95% for PT, 90% for asset
+        minOutput = (amount * fallbackBps) / 10000;
+    }
+    
+    /**
      * @notice Internal function to get Pendle config in delegatecall context
      * @param asset The asset address
      * @return market The Pendle market address
@@ -182,20 +251,8 @@ contract PendlePTStrategy is IStrategy, Ownable {
         // Approve Pendle router to spend asset
         IERC20(asset).safeIncreaseAllowance(address(pendleRouter), amountIn);
         
-        // Calculate minimum PT output to prevent sandwich attacks
-        uint256 minPtOut = 0;
-        try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 ptRate) {
-            if (ptRate > 0 && ptRate <= 1e18) {
-                // Calculate expected PT amount based on oracle rate
-                uint256 expectedPt = (amountIn * 1e18) / ptRate;
-                // Apply 2% slippage tolerance (98% of expected)
-                minPtOut = (expectedPt * 98) / 100;
-            }
-        } catch {
-            // If oracle fails, use a conservative minimum
-            // At least get back 95% of input amount in PT terms
-            minPtOut = (amountIn * 95) / 100;
-        }
+        // Calculate minimum PT output to prevent sandwich attacks (2% slippage)
+        uint256 minPtOut = _calculateMinOutput(market, amountIn, true, 200);
         
         // Prepare swap parameters, default ApproxParams
         IPendleRouter.ApproxParams memory approxParams = IPendleRouter.ApproxParams({
@@ -211,21 +268,10 @@ contract PendlePTStrategy is IStrategy, Ownable {
             netTokenIn: amountIn,
             tokenMintSy: asset, // Use asset for minting SY
             pendleSwap: address(0),
-            swapData: IPendleRouter.SwapData({
-                swapType: IPendleRouter.SwapType.NONE,
-                extRouter: address(0),
-                extCalldata: "",
-                needScale: false
-            })
+            swapData: _getDefaultSwapData()
         });
         
-        IPendleRouter.LimitOrderData memory limitData = IPendleRouter.LimitOrderData({
-            limitRouter: address(0),
-            epsSkipMarket: 0,
-            normalFills: new IPendleRouter.FillOrderParams[](0),
-            flashFills: new IPendleRouter.FillOrderParams[](0),
-            optData: ""
-        });
+        IPendleRouter.LimitOrderData memory limitData = _getDefaultLimitOrderData();
         
         // Swap asset for PT
         // In delegatecall context, this = vault
@@ -296,16 +342,39 @@ contract PendlePTStrategy is IStrategy, Ownable {
             uint256 ptToRedeem = amountOut > ptBalance ? ptBalance : amountOut;
             
             if (ptToRedeem > 0) {
-                // Redeem PT for underlying at 1:1 ratio after maturity
-                uint256 redeemed = 0;
-                try IPendlePT(pt).redeemPY(address(this), ptToRedeem) returns (uint256 _redeemed) {
-                    redeemed = _redeemed;
+                // After maturity, swap PT for asset
+                // Approve router to spend PT
+                IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptToRedeem);
+                
+                // Calculate minimum output (2% slippage)
+                uint256 minTokenOut = _calculateMinOutput(market, ptToRedeem, false, 200);
+                
+                // Create token output structure
+                IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
+                    tokenOut: asset,
+                    minTokenOut: minTokenOut,
+                    tokenRedeemSy: asset,
+                    pendleSwap: address(0),
+                    swapData: _getDefaultSwapData()
+                });
+                
+                // Perform swap
+                uint256 netTokenOut = 0;
+                try pendleRouter.swapExactPtForToken(
+                    address(this),
+                    market,
+                    ptToRedeem,
+                    tokenOutput,
+                    _getDefaultLimitOrderData()
+                ) returns (uint256 _netTokenOut, uint256, uint256) {
+                    netTokenOut = _netTokenOut;
                 } catch Error(string memory reason) {
-                    revert(string(abi.encodePacked("PendlePTStrategy.divestDelegate: PT redemption failed - ", reason)));
+                    revert(string(abi.encodePacked("PendlePTStrategy.divestDelegate: Matured PT redemption failed - ", reason)));
                 } catch {
-                    revert("PendlePTStrategy.divestDelegate: PT redemption failed with unknown error");
+                    revert("PendlePTStrategy.divestDelegate: Matured PT redemption failed with unknown error");
                 }
-                accountedOut = redeemed;
+                
+                accountedOut = netTokenOut;
                 exitGain = 0; // No exit gain when redeeming at maturity
             }
         } else {
@@ -327,53 +396,29 @@ contract PendlePTStrategy is IStrategy, Ownable {
                 ptToSell = ptBalance;
             }
             
-            // Approve Pendle router to spend PT
+            // Approve router and swap PT for asset
             IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptToSell);
             
-            // Calculate minimum token output to prevent sandwich attacks
-            uint256 minTokenOut = 0;
-            try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 _ptRate) {
-                if (_ptRate > 0 && _ptRate <= 1e18) {
-                    // Calculate expected asset amount based on oracle rate
-                    uint256 expectedAsset = (ptToSell * _ptRate) / 1e18;
-                    // Apply 2% slippage tolerance (98% of expected)
-                    minTokenOut = (expectedAsset * 98) / 100;
-                }
-            } catch {
-                // If oracle fails, use conservative minimum
-                // At least get back 90% of PT face value in asset terms
-                minTokenOut = (ptToSell * 90) / 100;
-            }
+            // Calculate minimum output (2% slippage)
+            uint256 minTokenOut = _calculateMinOutput(market, ptToSell, false, 200);
             
+            // Create token output structure
             IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
                 tokenOut: asset,
-                minTokenOut: minTokenOut, // Use calculated minimum
-                tokenRedeemSy: asset, // Use asset address for redeeming
+                minTokenOut: minTokenOut,
+                tokenRedeemSy: asset,
                 pendleSwap: address(0),
-                swapData: IPendleRouter.SwapData({
-                    swapType: IPendleRouter.SwapType.NONE,
-                    extRouter: address(0),
-                    extCalldata: "",
-                    needScale: false
-                })
+                swapData: _getDefaultSwapData()
             });
             
-            IPendleRouter.LimitOrderData memory limitData = IPendleRouter.LimitOrderData({
-                limitRouter: address(0),
-                epsSkipMarket: 0,
-                normalFills: new IPendleRouter.FillOrderParams[](0),
-                flashFills: new IPendleRouter.FillOrderParams[](0),
-                optData: ""
-            });
-            
-            // Swap PT for asset
+            // Perform swap
             uint256 netTokenOut = 0;
             try pendleRouter.swapExactPtForToken(
-                address(this), // receiver (vault)
+                address(this),
                 market,
                 ptToSell,
                 tokenOutput,
-                limitData
+                _getDefaultLimitOrderData()
             ) returns (uint256 _netTokenOut, uint256, uint256) {
                 netTokenOut = _netTokenOut;
             } catch Error(string memory reason) {
@@ -383,9 +428,7 @@ contract PendlePTStrategy is IStrategy, Ownable {
             }
             
             accountedOut = netTokenOut;
-            
             // Calculate exit gain/loss
-            // If we sold PT for more than its face value, that's a gain
             if (netTokenOut > ptToSell) {
                 exitGain = netTokenOut - ptToSell;
             } else {
@@ -429,10 +472,32 @@ contract PendlePTStrategy is IStrategy, Ownable {
         try this.divestDelegate(asset, amount, "") returns (uint256 accountedOut, uint256) {
             return accountedOut;
         } catch {
-            // If normal exit fails, try emergency redemption if matured
+            // If normal exit fails and PT is matured, try direct swap through router
             if (IPendlePT(pt).isExpired()) {
-                try IPendlePT(pt).redeemPY(address(this), ptBalance) returns (uint256 redeemed) {
-                    return redeemed;
+                // Approve router to spend PT
+                IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptBalance);
+                
+                // Calculate minimum output (10% slippage for emergency)
+                uint256 minTokenOut = _calculateMinOutput(market, ptBalance, false, 1000);
+                
+                // Create token output structure
+                IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
+                    tokenOut: asset,
+                    minTokenOut: minTokenOut,
+                    tokenRedeemSy: asset,
+                    pendleSwap: address(0),
+                    swapData: _getDefaultSwapData()
+                });
+                
+                // Perform swap
+                try pendleRouter.swapExactPtForToken(
+                    address(this),
+                    market,
+                    ptBalance,
+                    tokenOutput,
+                    _getDefaultLimitOrderData()
+                ) returns (uint256 netTokenOut, uint256, uint256) {
+                    return netTokenOut;
                 } catch {
                     return 0;
                 }
@@ -537,8 +602,10 @@ contract PendlePTStrategy is IStrategy, Ownable {
             return (0, 0);
         }
         
-        // Get market and PT from storage (using delegatecall-aware function)
-        (address market, address pt) = _getPendleConfigInDelegateCall(asset);
+        // Get market and PT from storage directly (this is a view function, not delegatecall)
+        PendleConfig memory config = pendleMarkets[asset];
+        address market = config.market;
+        address pt = config.pt;
         
         if (market == address(0) || pt == address(0)) {
             // Asset not configured, use conservative estimate
