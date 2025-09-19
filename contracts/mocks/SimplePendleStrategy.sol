@@ -25,14 +25,6 @@ contract SimplePendleStrategy is IStrategy {
         return (amountOut, 0);
     }
     
-    function emergencyWithdrawDelegate(
-        address asset,
-        uint256 amount,
-        bytes calldata data
-    ) external override returns (uint256 withdrawn) {
-        return amount;
-    }
-    
     function totalUnderlying(address vault) external view override returns (uint256) {
         return 0;
     }

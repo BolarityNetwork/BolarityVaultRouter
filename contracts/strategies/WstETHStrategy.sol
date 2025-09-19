@@ -103,46 +103,6 @@ contract WstETHStrategy is IStrategy {
     }
     
     /**
-     * @notice Emergency withdraw from wstETH (delegatecall from vault)
-     * @param asset The asset to withdraw (should be stETH)
-     * @param amount The amount of stETH to withdraw
-     * @return withdrawn The amount actually withdrawn
-     */
-    function emergencyWithdrawDelegate(
-        address asset,
-        uint256 amount,
-        bytes calldata /* data */
-    ) external override returns (uint256 withdrawn) {
-        require(asset == address(stETH), "WstETHStrategy: Asset must be stETH");
-        
-        if (amount == 0) {
-            return 0;
-        }
-        
-        uint256 wstETHBalance = wstETH.balanceOf(address(this));
-        if (wstETHBalance == 0) {
-            return 0;
-        }
-        
-        // Calculate how much stETH we can get
-        uint256 availableStETH = wstETH.getStETHByWstETH(wstETHBalance);
-        uint256 toWithdraw = amount > availableStETH ? availableStETH : amount;
-        
-        // Calculate wstETH to unwrap
-        uint256 wstETHToUnwrap = wstETH.getWstETHByStETH(toWithdraw);
-        if (wstETHToUnwrap > wstETHBalance) {
-            wstETHToUnwrap = wstETHBalance;
-        }
-        
-        // Try to unwrap
-        try wstETH.unwrap(wstETHToUnwrap) returns (uint256 stETHReceived) {
-            return stETHReceived;
-        } catch {
-            return 0;
-        }
-    }
-    
-    /**
      * @notice Get total underlying stETH value for a vault's wstETH position
      * @param vault The vault address
      * @return The total underlying stETH value

@@ -216,42 +216,6 @@ contract CompoundStrategy is IStrategy, Ownable {
     }
 
     /**
-     * @notice Emergency withdraw from Compound V3 (delegatecall from vault)
-     * @param asset The asset to withdraw
-     * @param amount The amount to withdraw
-     * @return withdrawn The amount actually withdrawn
-     */
-    function emergencyWithdrawDelegate(
-        address asset,
-        uint256 amount,
-        bytes calldata /* data */
-    ) external override returns (uint256 withdrawn) {
-        if (amount == 0) {
-            return 0;
-        }
-        
-        // Get the Comet for this asset in delegatecall context
-        address comet = _getCometInDelegateCall(asset);
-        
-        // Get current balance in Comet
-        uint256 balance = IComet(comet).balanceOf(address(this));
-        
-        if (balance > 0) {
-            uint256 toWithdraw = amount > balance ? balance : amount;
-            
-            // Attempt to withdraw
-            try IComet(comet).withdraw(asset, toWithdraw) {
-                withdrawn = toWithdraw;
-            } catch {
-                // If withdraw fails, return 0
-                withdrawn = 0;
-            }
-        }
-        
-        return withdrawn;
-    }
-
-    /**
      * @notice Get total underlying assets for a vault in Compound V3
      * @param vault The vault address
      * @return The total underlying assets (Comet balance)

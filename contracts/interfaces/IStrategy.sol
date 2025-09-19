@@ -17,13 +17,6 @@ interface IStrategy {
         bytes calldata data
     ) external returns (uint256 accountedOut, uint256 exitGain);
     
-    // Emergency withdraw via delegatecall
-    function emergencyWithdrawDelegate(
-        address asset,
-        uint256 amount,
-        bytes calldata data
-    ) external returns (uint256 withdrawn);
-    
     // External view for valuation, needs vault address
     function totalUnderlying(address vault) external view returns (uint256);
     

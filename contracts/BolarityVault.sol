@@ -686,8 +686,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     // Strategy management
-    function setStrategy(address newStrategy) external override onlyOwner {
+    function setStrategy(address newStrategy) external override onlyOwner nonReentrant {
         require(newStrategy != address(0), "BolarityVault: Invalid strategy");
+        require(!paused(), "BolarityVault: Paused");
+        
+        // Crystallize fees before strategy change
+        _accruePerfFee();
         
         address oldStrategy = strategy;
         
@@ -707,7 +711,13 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
                     (success, ) = oldStrategy.delegatecall(
                         abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), invested, emptyData)
                     );
-                    // If divest fails, we continue anyway - funds might be stuck but we need to allow strategy change
+                    
+                    if (!success) {
+                        // Emit event for failed divestment but continue with strategy change
+                        emit Divested(oldStrategy, 0);
+                    } else {
+                        emit Divested(oldStrategy, invested);
+                    }
                 }
             }
         }
@@ -719,12 +729,16 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 idle = _asset.balanceOf(address(this));
         if (idle > 0) {
             bytes memory emptyData;
-            (bool investSuccess, ) = newStrategy.delegatecall(
+            (bool investSuccess, bytes memory returnData) = newStrategy.delegatecall(
                 abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), idle, emptyData)
             );
-            // If invest fails, funds remain idle in vault
-            if (!investSuccess) {
-                // Log or handle the failure if needed
+            
+            if (investSuccess && returnData.length >= 64) {
+                (uint256 accounted, ) = abi.decode(returnData, (uint256, uint256));
+                emit Invested(newStrategy, accounted);
+            } else {
+                // Emit event for failed investment
+                emit Invested(newStrategy, 0);
             }
         }
         
@@ -732,6 +746,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
 
     function emergencyWithdraw() external onlyOwner {
+        require(strategy != address(0), "BolarityVault: No strategy set");
+        
         // Get total invested amount
         (bool success, bytes memory data) = strategy.staticcall(
             abi.encodeWithSignature("totalUnderlying(address)", address(this))
@@ -741,29 +757,45 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             uint256 invested = abi.decode(data, (uint256));
             
             if (invested > 0) {
-                // Emergency withdraw via delegatecall
+                // Emergency withdraw via delegatecall using divestDelegate
                 bytes memory emptyData;
                 (bool emergencySuccess, ) = strategy.delegatecall(
-                    abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), invested, emptyData)
+                    abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), invested, emptyData)
                 );
-                // We don't check success as this is emergency withdraw
-                // Just capture return value to avoid compiler warning
-                emergencySuccess; // Silence unused variable warning
+                
+                if (emergencySuccess) {
+                    emit Divested(strategy, invested);
+                }
             }
         }
     }
 
     function emergencyWithdraw(uint256 amount) external override onlyOwner {
-        if (amount > 0) {
-            // Emergency withdraw specific amount via delegatecall
+        require(strategy != address(0), "BolarityVault: No strategy set");
+        require(amount > 0, "BolarityVault: Zero amount");
+        
+        // Verify amount doesn't exceed invested amount
+        (bool success, bytes memory data) = strategy.staticcall(
+            abi.encodeWithSignature("totalUnderlying(address)", address(this))
+        );
+        
+        uint256 invested = 0;
+        if (success && data.length >= 32) {
+            invested = abi.decode(data, (uint256));
+        }
+        
+        uint256 toWithdraw = amount > invested ? invested : amount;
+        
+        if (toWithdraw > 0) {
+            // Emergency withdraw specific amount via delegatecall using divestDelegate
             bytes memory emptyData;
             (bool emergencySuccess, ) = strategy.delegatecall(
-                abi.encodeWithSignature("emergencyWithdrawDelegate(address,uint256,bytes)", asset(), amount, emptyData)
+                abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, emptyData)
             );
-            // We don't check success as this is emergency withdraw
-            // Just capture return value to avoid compiler warning
-            emergencySuccess; // Silence unused variable warning
-            // We don't check success as this is emergency withdraw
+            
+            if (emergencySuccess) {
+                emit Divested(strategy, toWithdraw);
+            }
         }
     }
 

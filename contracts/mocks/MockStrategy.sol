@@ -39,14 +39,6 @@ contract MockStrategy is IStrategy {
         return (amountOut, 0);
     }
 
-    function emergencyWithdrawDelegate(
-        address,
-        uint256,
-        bytes calldata
-    ) external pure override returns (uint256) {
-        return 0;
-    }
-
     function totalUnderlying(address vault) external view override returns (uint256) {
         return vaultFunds[vault];
     }

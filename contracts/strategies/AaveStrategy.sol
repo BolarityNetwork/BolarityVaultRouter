@@ -76,30 +76,6 @@ contract AaveStrategy is IStrategy {
     }
 
     /**
-     * @notice Emergency withdraw from Aave (delegatecall from vault)
-     * @param asset The asset to withdraw
-     * @param amount The amount to withdraw
-     * @return withdrawn The amount actually withdrawn
-     */
-    function emergencyWithdrawDelegate(
-        address asset,
-        uint256 amount,
-        bytes calldata /* data */
-    ) external override returns (uint256 withdrawn) {
-        if (amount == 0) {
-            return 0;
-        }
-        
-        // Try to withdraw from Aave
-        // If it fails, return 0
-        try aavePool.withdraw(asset, amount, address(this)) returns (uint256 withdrawnAmount) {
-            return withdrawnAmount;
-        } catch {
-            return 0;
-        }
-    }
-
-    /**
      * @notice Get total underlying assets for a vault in Aave
      * @param vault The vault address to check balance for
      * @return The total underlying assets (aToken balance) in the protocol
