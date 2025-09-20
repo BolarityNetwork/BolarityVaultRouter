@@ -11,9 +11,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /**
  * @title CompoundStrategy
  * @notice Strategy for Compound V3 (Comet) protocol integration
- * @dev This contract can be used via delegatecall from a vault for investment operations
- * The storage variables (cometMarkets mapping) are only used for configuration management
- * When called via delegatecall, it uses staticcall to read its own storage
+ * @dev This contract is designed to be used via delegatecall from a vault
+ * When used via delegatecall, the comet address must be passed through calldata
+ * Storage configuration is only used for direct calls and view functions
  */
 contract CompoundStrategy is IStrategy, Ownable {
     using SafeERC20 for IERC20;
@@ -122,73 +122,59 @@ contract CompoundStrategy is IStrategy, Ownable {
     }
     
     /**
-     * @notice Internal function to get Comet address in delegatecall context
+     * @notice Internal function to get Comet address from calldata or strategy storage
      * @param asset The asset address
+     * @param data The calldata that may contain the comet address
      * @return comet The Comet address
      */
-    function _getCometInDelegateCall(address asset) internal view returns (address comet) {
-        // In delegatecall context, we need to read the strategy address from vault's storage
-        // and make a static call to get the correct Comet address
-        address strategyAddress;
-        assembly {
-            // Strategy is at storage slot 8 in BolarityVault  
-            strategyAddress := sload(8)
-        }
-        
-        // Static call to strategy's cometMarkets function to get comet directly
-        (bool success, bytes memory data) = strategyAddress.staticcall(
-            abi.encodeWithSelector(this.cometMarkets.selector, asset)
-        );
-        
-        if (success && data.length >= 32) {
-            comet = abi.decode(data, (address));
-            if (comet != address(0)) {
-                return comet;
+    function _getCometAddress(address asset, bytes calldata data) internal view returns (address comet) {
+        // First, try to get comet from calldata if provided
+        if (data.length >= 32) {
+            address providedComet = abi.decode(data, (address));
+            if (providedComet != address(0)) {
+                // Verify the Comet's base token matches
+                require(IComet(providedComet).baseToken() == asset, "CompoundStrategy: Asset mismatch");
+                return providedComet;
             }
         }
         
-        // If not found or zero, revert
-        revert("CompoundStrategy: Comet not configured for asset");
-    }
-    
-    /**
-     * @notice Internal function to save comet address to strategy storage
-     * @param asset The asset address
-     * @param comet The Comet address to save
-     */
-    function _saveCometToStrategy(address asset, address comet) internal {
-        // Get strategy address from vault's storage
+        // If not in calldata, try to read from strategy's storage via staticcall
+        // This is needed when the contract is called via delegatecall
         address strategyAddress;
         assembly {
             // Strategy is at storage slot 8 in BolarityVault
             strategyAddress := sload(8)
         }
         
-        // Check if comet is already configured
-        (bool checkSuccess, bytes memory checkData) = strategyAddress.staticcall(
-            abi.encodeWithSelector(this.cometMarkets.selector, asset)
-        );
-        
-        if (checkSuccess && checkData.length >= 32) {
-            address existingComet = abi.decode(checkData, (address));
-            if (existingComet == comet) {
-                // Already configured with same comet, no need to update
-                return;
+        // If strategy address is valid, make staticcall to get comet
+        if (strategyAddress != address(0)) {
+            (bool success, bytes memory returnData) = strategyAddress.staticcall(
+                abi.encodeWithSelector(this.cometMarkets.selector, asset)
+            );
+            
+            if (success && returnData.length >= 32) {
+                comet = abi.decode(returnData, (address));
+                if (comet != address(0)) {
+                    return comet;
+                }
+            }
+            
+            // Check if this asset is not configured in the strategy
+            (bool isSupported, bytes memory supportedData) = strategyAddress.staticcall(
+                abi.encodeWithSelector(this.isAssetSupported.selector, asset)
+            );
+            
+            // If we can determine the asset isn't supported, give a more specific error
+            if (isSupported && supportedData.length >= 32) {
+                bool assetSupported = abi.decode(supportedData, (bool));
+                if (!assetSupported) {
+                    revert("CompoundStrategy: Comet not configured for asset");
+                }
             }
         }
         
-        // Call the strategy's setCometMarket function if not configured or different
-        // This requires the strategy owner to be the vault
-        (bool success, ) = strategyAddress.call(
-            abi.encodeWithSelector(this.setCometMarket.selector, asset, comet)
-        );
-        
-        // If the call fails (e.g., not owner), continue anyway
-        // The comet is still valid for this transaction
-        if (!success) {
-            // Could emit an event or handle differently if needed
-            // For now, we just continue as the comet is valid
-        }
+        // If still not found, revert
+        revert("CompoundStrategy: Comet address must be provided in calldata for delegatecall");
     }
     
     /**
@@ -211,7 +197,7 @@ contract CompoundStrategy is IStrategy, Ownable {
      * @notice Invest assets into Compound V3 (delegatecall from vault)
      * @param asset The asset to invest  
      * @param amountIn The amount to invest
-     * @param data Optional: can contain the comet address to auto-configure
+     * @param data Must contain the comet address when called via delegatecall
      * @return accounted The amount accounted for (same as input for Compound V3)
      * @return entryGain No entry gain for Compound V3
      */
@@ -224,30 +210,8 @@ contract CompoundStrategy is IStrategy, Ownable {
             return (0, 0);
         }
         
-        address comet;
-        
-        // Check if comet address is provided in data
-        if (data.length >= 32) {
-            // Decode comet address from data
-            address providedComet = abi.decode(data, (address));
-            
-            // Verify if provided comet is valid
-            if (providedComet != address(0)) {
-                // Verify the Comet's base token matches
-                require(IComet(providedComet).baseToken() == asset, "CompoundStrategy: Asset mismatch");
-                
-                // Auto-configure: Save the comet for this asset
-                _saveCometToStrategy(asset, providedComet);
-                
-                comet = providedComet;
-            } else {
-                // Get the Comet for this asset in delegatecall context
-                comet = _getCometInDelegateCall(asset);
-            }
-        } else {
-            // Get the Comet for this asset in delegatecall context
-            comet = _getCometInDelegateCall(asset);
-        }
+        // Get the comet address (from calldata or strategy storage)
+        address comet = _getCometAddress(asset, data);
         
         // Approve and supply to Comet
         // In delegatecall context, this = vault
@@ -262,20 +226,21 @@ contract CompoundStrategy is IStrategy, Ownable {
      * @notice Withdraw assets from Compound V3 (delegatecall from vault)
      * @param asset The asset to withdraw
      * @param amountOut The amount to withdraw
+     * @param data Must contain the comet address when called via delegatecall
      * @return accountedOut The amount withdrawn
      * @return exitGain No exit gain for Compound V3
      */
     function divestDelegate(
         address asset,
         uint256 amountOut,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accountedOut, uint256 exitGain) {
         if (amountOut == 0) {
             return (0, 0);
         }
         
-        // Get the Comet for this asset in delegatecall context
-        address comet = _getCometInDelegateCall(asset);
+        // Get the comet address (from calldata or strategy storage)
+        address comet = _getCometAddress(asset, data);
         
         // Withdraw from Compound V3
         // In delegatecall context, this = vault
