@@ -16,9 +16,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * According to design.md: Pendle PT is a zero-coupon bond with entry gain
  * 
  * Optimizations:
- * - Helper functions for common operations (_getDefaultSwapData, _getDefaultLimitOrderData)
- * - Unified slippage calculation (_calculateMinOutput)
- * - Reduced code duplication across invest/divest/emergency functions
+ * - Reduced code duplication across invest/divest functions
  */
 contract PendlePTStrategy is IStrategy, Ownable {
     using SafeERC20 for IERC20;
@@ -105,14 +103,6 @@ contract PendlePTStrategy is IStrategy, Ownable {
     }
     
     /**
-     * @notice Get the number of supported assets
-     * @return The count of supported assets
-     */
-    function getSupportedAssetsCount() external view returns (uint256) {
-        return supportedAssets.length;
-    }
-    
-    /**
      * @notice Get Pendle configuration for a specific asset
      * @param asset The asset to query
      * @return market The Pendle market address
@@ -122,70 +112,6 @@ contract PendlePTStrategy is IStrategy, Ownable {
         PendleConfig memory config = pendleMarkets[asset];
         market = config.market;
         pt = config.pt;
-    }
-    
-    /**
-     * @notice Create default SwapData structure
-     * @return SwapData with no external swap
-     */
-    function _getDefaultSwapData() private pure returns (IPendleRouter.SwapData memory) {
-        return IPendleRouter.SwapData({
-            swapType: IPendleRouter.SwapType.NONE,
-            extRouter: address(0),
-            extCalldata: "",
-            needScale: false
-        });
-    }
-    
-    /**
-     * @notice Create default LimitOrderData structure
-     * @return LimitOrderData with no limit orders
-     */
-    function _getDefaultLimitOrderData() private pure returns (IPendleRouter.LimitOrderData memory) {
-        return IPendleRouter.LimitOrderData({
-            limitRouter: address(0),
-            epsSkipMarket: 0,
-            normalFills: new IPendleRouter.FillOrderParams[](0),
-            flashFills: new IPendleRouter.FillOrderParams[](0),
-            optData: ""
-        });
-    }
-    
-    /**
-     * @notice Calculate minimum output based on oracle rate
-     * @param market The Pendle market address
-     * @param amount The input amount
-     * @param isForPt True if calculating for PT output, false for asset output
-     * @param slippageBps Slippage in basis points (e.g., 200 = 2%)
-     * @return minOutput The minimum acceptable output amount
-     */
-    function _calculateMinOutput(
-        address market,
-        uint256 amount,
-        bool isForPt,
-        uint256 slippageBps
-    ) private view returns (uint256 minOutput) {
-        try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 ptRate) {
-            if (ptRate > 0 && ptRate <= 1e18) {
-                uint256 expected;
-                if (isForPt) {
-                    // Calculate expected PT from asset amount
-                    expected = (amount * 1e18) / ptRate;
-                } else {
-                    // Calculate expected asset from PT amount
-                    expected = (amount * ptRate) / 1e18;
-                }
-                // Apply slippage tolerance
-                minOutput = (expected * (10000 - slippageBps)) / 10000;
-                return minOutput;
-            }
-        } catch {
-            // Oracle failed, use fallback
-        }
-        
-        // Fallback: conservative minimum
-        uint256 fallbackBps = isForPt ? 9500 : 9000; // 95% for PT, 90% for asset
-        minOutput = (amount * fallbackBps) / 10000;
     }
     
     /**
@@ -209,10 +135,34 @@ contract PendlePTStrategy is IStrategy, Ownable {
         (bool success, bytes memory data) = strategyAddress.staticcall(
             abi.encodeWithSignature("pendleMarkets(address)", asset)
         );
-        require(success, "PendlePTStrategy: Failed to read pendleMarkets from strategy storage");
-        require(data.length == 64, "PendlePTStrategy: Invalid config data length, expected 64 bytes");
-        (market, pt) = abi.decode(data, (address, address));
-        return (market, pt);
+        
+        if (success && data.length == 64) {
+            (market, pt) = abi.decode(data, (address, address));
+            if (market != address(0) && pt != address(0)) {
+                return (market, pt);
+            }
+        }
+        
+        // If not found, return zero addresses (will be checked by caller)
+        return (address(0), address(0));
+    }
+    
+    // Note: _savePendleConfigToStrategy function removed
+    // Configuration cannot be saved during delegatecall execution
+    // Admin must manually call setPendleMarket on the strategy contract
+    
+    /**
+     * @notice Internal function to get PT from market using readTokens
+     * @param market The Pendle market address
+     * @return pt The PT token address
+     */
+    function _getPTFromMarket(address market) internal view returns (address pt) {
+        try IPendleMarket(market).readTokens() returns (address, address _pt, address) {
+            pt = _pt;
+        } catch {
+            pt = address(0);
+        }
+        return pt;
     }
     
     
@@ -220,23 +170,48 @@ contract PendlePTStrategy is IStrategy, Ownable {
      * @notice Invest assets into Pendle PT (delegatecall from vault)
      * @param asset The asset to invest (e.g., USDC)
      * @param amountIn The amount of asset to invest
+     * @param data Complete calldata for swapExactTokenForPt call
      * @return accounted The face value of PT received (for zero-coupon bonds)
      * @return entryGain The immediate gain from buying PT at discount
-     * @dev According to design.md: Example 100 USDC → 108 PT returns (accounted = 108, entryGain = 8)
+     * @dev Requires complete swapExactTokenForPt calldata
      */
     function investDelegate(
         address asset,
         uint256 amountIn,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accounted, uint256 entryGain) {
         if (amountIn == 0) {
             return (0, 0);
         }
         
-        // Get market and PT from storage (using delegatecall-aware function)
-        (address market, address pt) = _getPendleConfigInDelegateCall(asset);
-        require(market != address(0), "PendlePTStrategy: Market not configured for asset. Call setPendleMarket() first");
-        require(pt != address(0), "PendlePTStrategy: PT not configured for asset. Call setPendleMarket() first");
+        require(data.length >= 68, "PendlePTStrategy: Calldata required for swapExactTokenForPt");
+        
+        address market;
+        address pt;
+        
+        // Parse market address from swapExactTokenForPt calldata
+        // Function signature: swapExactTokenForPt(address,address,uint256,ApproxParams,TokenInput,LimitOrderData)
+        // The second parameter (offset 36-68) is the market address
+        assembly {
+            market := calldataload(add(data.offset, 36))
+        }
+        
+        require(market != address(0), "PendlePTStrategy: Invalid market address in calldata");
+        
+        // Try to get PT from stored config first
+        (address storedMarket, address storedPt) = _getPendleConfigInDelegateCall(asset);
+        
+        if (storedMarket == market && storedPt != address(0)) {
+            // Use stored PT if market matches
+            pt = storedPt;
+        } else {
+            // Fetch PT from market using readTokens()
+            pt = _getPTFromMarket(market);
+            require(pt != address(0), "PendlePTStrategy: Failed to get PT from market");
+            
+            // Note: Cannot save configuration during delegatecall
+            // Admin must call setPendleMarket directly on the strategy contract
+        }
         
         // Verify PT is not expired
         require(!IPendlePT(pt).isExpired(), "PendlePTStrategy: PT has expired, cannot invest in expired PT");
@@ -251,43 +226,19 @@ contract PendlePTStrategy is IStrategy, Ownable {
         // Approve Pendle router to spend asset
         IERC20(asset).safeIncreaseAllowance(address(pendleRouter), amountIn);
         
-        // Calculate minimum PT output to prevent sandwich attacks (2% slippage)
-        uint256 minPtOut = _calculateMinOutput(market, amountIn, true, 200);
+        // Call Pendle router with the provided calldata
+        (bool success, bytes memory result) = address(pendleRouter).call(data);
         
-        // Prepare swap parameters, default ApproxParams
-        IPendleRouter.ApproxParams memory approxParams = IPendleRouter.ApproxParams({
-            guessMin: 0,
-            guessMax: type(uint256).max,
-            guessOffchain: 0, // Can be provided via data for optimization
-            maxIteration: 256,
-            eps: 1e14
-        });
-        
-        IPendleRouter.TokenInput memory tokenInput = IPendleRouter.TokenInput({
-            tokenIn: asset,
-            netTokenIn: amountIn,
-            tokenMintSy: asset, // Use asset for minting SY
-            pendleSwap: address(0),
-            swapData: _getDefaultSwapData()
-        });
-        
-        IPendleRouter.LimitOrderData memory limitData = _getDefaultLimitOrderData();
-        
-        // Swap asset for PT
-        // In delegatecall context, this = vault
-        try pendleRouter.swapExactTokenForPt(
-            address(this), // receiver (vault)
-            market,
-            minPtOut, // Use calculated minimum PT output
-            approxParams,
-            tokenInput,
-            limitData
-        ) returns (uint256, uint256, uint256) {
-            // Swap successful
-        } catch Error(string memory reason) {
-            revert(string(abi.encodePacked("PendlePTStrategy: Pendle swap failed - ", reason)));
-        } catch (bytes memory) {
-            revert("PendlePTStrategy: Pendle swap failed with unknown error");
+        if (!success) {
+            // Try to decode revert reason
+            if (result.length > 0) {
+                assembly {
+                    let resultSize := mload(result)
+                    revert(add(32, result), resultSize)
+                }
+            } else {
+                revert("PendlePTStrategy: Pendle swap failed");
+            }
         }
         
         // Calculate actual PT received
@@ -315,131 +266,94 @@ contract PendlePTStrategy is IStrategy, Ownable {
     /**
      * @notice Withdraw assets from Pendle PT (delegatecall from vault)
      * @param asset The asset to withdraw (e.g., USDC)
-     * @param amountOut The amount of asset to withdraw
+     * @param amountOut The amount of asset to withdraw (not used when calldata provided)
+     * @param data Complete calldata for swapExactPtForToken call
      * @return accountedOut The amount withdrawn
      * @return exitGain Exit gain if any (for PT, could be from selling before maturity)
+     * @dev Requires complete swapExactPtForToken calldata
      */
     function divestDelegate(
         address asset,
         uint256 amountOut,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accountedOut, uint256 exitGain) {
-        if (amountOut == 0) {
+        if (data.length == 0 && amountOut == 0) {
             return (0, 0);
         }
         
-        // Get market and PT from storage (using delegatecall-aware function)
-        (address market, address pt) = _getPendleConfigInDelegateCall(asset);
-        require(market != address(0), "PendlePTStrategy.divestDelegate: Market not configured for asset");
-        require(pt != address(0), "PendlePTStrategy.divestDelegate: PT not configured for asset");
+        require(data.length >= 100, "PendlePTStrategy: Calldata required for swapExactPtForToken");
         
-        uint256 assetBalanceBefore = IERC20(asset).balanceOf(address(this));
+        address market;
+        address pt;
+        uint256 ptToSell;
         
-        // Check if PT has matured
-        if (IPendlePT(pt).isExpired()) {
-            // PT has matured, redeem directly for underlying
-            uint256 ptBalance = IERC20(pt).balanceOf(address(this));
-            uint256 ptToRedeem = amountOut > ptBalance ? ptBalance : amountOut;
-            
-            if (ptToRedeem > 0) {
-                // After maturity, swap PT for asset
-                // Approve router to spend PT
-                IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptToRedeem);
-                
-                // Calculate minimum output (2% slippage)
-                uint256 minTokenOut = _calculateMinOutput(market, ptToRedeem, false, 200);
-                
-                // Create token output structure
-                IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
-                    tokenOut: asset,
-                    minTokenOut: minTokenOut,
-                    tokenRedeemSy: asset,
-                    pendleSwap: address(0),
-                    swapData: _getDefaultSwapData()
-                });
-                
-                // Perform swap
-                uint256 netTokenOut = 0;
-                try pendleRouter.swapExactPtForToken(
-                    address(this),
-                    market,
-                    ptToRedeem,
-                    tokenOutput,
-                    _getDefaultLimitOrderData()
-                ) returns (uint256 _netTokenOut, uint256, uint256) {
-                    netTokenOut = _netTokenOut;
-                } catch Error(string memory reason) {
-                    revert(string(abi.encodePacked("PendlePTStrategy.divestDelegate: Matured PT redemption failed - ", reason)));
-                } catch {
-                    revert("PendlePTStrategy.divestDelegate: Matured PT redemption failed with unknown error");
-                }
-                
-                accountedOut = netTokenOut;
-                exitGain = 0; // No exit gain when redeeming at maturity
-            }
+        // Parse market address and PT amount from swapExactPtForToken calldata
+        // Function signature: swapExactPtForToken(address,address,uint256,TokenOutput,LimitOrderData)
+        // The second parameter (offset 36-68) is the market address
+        // The third parameter (offset 68-100) is the PT amount
+        assembly {
+            market := calldataload(add(data.offset, 36))
+            ptToSell := calldataload(add(data.offset, 68))
+        }
+        
+        require(market != address(0), "PendlePTStrategy: Invalid market address in calldata");
+        require(ptToSell > 0, "PendlePTStrategy: Invalid PT amount in calldata");
+        
+        // Try to get PT from stored config first
+        (address storedMarket, address storedPt) = _getPendleConfigInDelegateCall(asset);
+        
+        if (storedMarket == market && storedPt != address(0)) {
+            // Use stored PT if market matches
+            pt = storedPt;
         } else {
-            // PT not matured, need to sell on market
-            uint256 ptBalance = IERC20(pt).balanceOf(address(this));
+            // Fetch PT from market using readTokens()
+            pt = _getPTFromMarket(market);
+            require(pt != address(0), "PendlePTStrategy: Failed to get PT from market");
             
-            // Estimate how much PT we need to sell to get amountOut
-            // Account for the discount rate: PT trades at discount to underlying
-            // If 1 PT = 0.9259 USDC, then to get X USDC we need X / 0.9259 PT
-            uint256 ptRate = 0;
-            try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 _rate) {
-                ptRate = _rate;
-                require(ptRate > 0, "PendlePTStrategy.divestDelegate: Invalid oracle rate");
-            } catch {
-                revert("PendlePTStrategy.divestDelegate: Oracle call failed, cannot determine PT rate");
-            }
-            uint256 ptToSell = (amountOut * 1e18) / ptRate;
-            if (ptToSell > ptBalance) {
-                ptToSell = ptBalance;
-            }
-            
-            // Approve router and swap PT for asset
-            IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptToSell);
-            
-            // Calculate minimum output (2% slippage)
-            uint256 minTokenOut = _calculateMinOutput(market, ptToSell, false, 200);
-            
-            // Create token output structure
-            IPendleRouter.TokenOutput memory tokenOutput = IPendleRouter.TokenOutput({
-                tokenOut: asset,
-                minTokenOut: minTokenOut,
-                tokenRedeemSy: asset,
-                pendleSwap: address(0),
-                swapData: _getDefaultSwapData()
-            });
-            
-            // Perform swap
-            uint256 netTokenOut = 0;
-            try pendleRouter.swapExactPtForToken(
-                address(this),
-                market,
-                ptToSell,
-                tokenOutput,
-                _getDefaultLimitOrderData()
-            ) returns (uint256 _netTokenOut, uint256, uint256) {
-                netTokenOut = _netTokenOut;
-            } catch Error(string memory reason) {
-                revert(string(abi.encodePacked("PendlePTStrategy.divestDelegate: PT swap failed - ", reason)));
-            } catch {
-                revert("PendlePTStrategy.divestDelegate: PT swap failed with unknown error");
-            }
-            
-            accountedOut = netTokenOut;
-            // Calculate exit gain/loss
-            if (netTokenOut > ptToSell) {
-                exitGain = netTokenOut - ptToSell;
+            // Note: Cannot save configuration during delegatecall
+            // Admin must call setPendleMarket directly on the strategy contract
+        }
+        
+        // Get balances before swap
+        uint256 assetBalanceBefore = IERC20(asset).balanceOf(address(this));
+        uint256 ptBalanceBefore = IERC20(pt).balanceOf(address(this));
+        
+        require(ptBalanceBefore >= ptToSell, "PendlePTStrategy: Insufficient PT balance");
+        
+        // Approve router to spend PT
+        IERC20(pt).safeIncreaseAllowance(address(pendleRouter), ptToSell);
+        
+        // Call Pendle router with the provided calldata
+        (bool success, bytes memory result) = address(pendleRouter).call(data);
+        
+        if (!success) {
+            // Try to decode revert reason
+            if (result.length > 0) {
+                assembly {
+                    let resultSize := mload(result)
+                    revert(add(32, result), resultSize)
+                }
             } else {
-                exitGain = 0;
+                revert("PendlePTStrategy: Pendle swap failed");
             }
         }
         
+        // Calculate actual asset received
         uint256 assetBalanceAfter = IERC20(asset).balanceOf(address(this));
         uint256 actualReceived = assetBalanceAfter - assetBalanceBefore;
         
-        return (actualReceived, exitGain);
+        accountedOut = actualReceived;
+        
+        // Calculate exit gain/loss
+        // If PT has matured, exitGain is 0 since we're redeeming at face value
+        // If not matured, calculate based on the amount received vs PT sold
+        if (!IPendlePT(pt).isExpired() && actualReceived > ptToSell) {
+            exitGain = actualReceived - ptToSell;
+        } else {
+            exitGain = 0;
+        }
+        
+        return (accountedOut, exitGain);
     }
     
     /**
@@ -480,39 +394,6 @@ contract PendlePTStrategy is IStrategy, Ownable {
             return ptBalance;
         } else {
             // If not matured, use oracle to get current value
-            try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 rate) {
-                return (ptBalance * rate) / 1e18;
-            } catch {
-                // Fallback to face value if oracle fails
-                return ptBalance;
-            }
-        }
-    }
-    
-    /**
-     * @notice Get total underlying value for a vault's PT position with market info
-     * @param vault The vault address  
-     * @param market The Pendle market address
-     * @param pt The PT token address
-     * @return The total underlying value
-     */
-    function totalUnderlyingWithMarket(
-        address vault,
-        address market,
-        address pt
-    ) external view returns (uint256) {
-        uint256 ptBalance = IERC20(pt).balanceOf(vault);
-        
-        if (ptBalance == 0) {
-            return 0;
-        }
-        
-        if (IPendlePT(pt).isExpired()) {
-            // If matured, PT is worth face value (1:1 with underlying)
-            return ptBalance;
-        } else {
-            // If not matured, use oracle to get current value
-            // This returns the current market value, not face value
             try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 rate) {
                 return (ptBalance * rate) / 1e18;
             } catch {

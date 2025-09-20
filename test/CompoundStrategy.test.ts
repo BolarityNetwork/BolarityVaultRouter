@@ -168,7 +168,7 @@ describe("CompoundStrategy", function () {
       // Try to deposit - should fail because asset doesn't match Comet's base token
       await expect(
         wrongVault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)
-      ).to.be.revertedWith("CompoundStrategy: Failed to get Comet");
+      ).to.be.revertedWith("CompoundStrategy: Comet not configured for asset");
     });
 
     it("Should support multiple Comet markets", async function () {

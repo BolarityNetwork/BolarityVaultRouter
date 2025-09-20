@@ -135,13 +135,60 @@ contract CompoundStrategy is IStrategy, Ownable {
             strategyAddress := sload(8)
         }
         
-        // Static call to strategy's getCometForAsset function
+        // Static call to strategy's cometMarkets function to get comet directly
         (bool success, bytes memory data) = strategyAddress.staticcall(
-            abi.encodeWithSelector(this.getCometForAsset.selector, asset)
+            abi.encodeWithSelector(this.cometMarkets.selector, asset)
         );
-        require(success && data.length >= 32, "CompoundStrategy: Failed to get Comet");
-        comet = abi.decode(data, (address));
-        return comet;
+        
+        if (success && data.length >= 32) {
+            comet = abi.decode(data, (address));
+            if (comet != address(0)) {
+                return comet;
+            }
+        }
+        
+        // If not found or zero, revert
+        revert("CompoundStrategy: Comet not configured for asset");
+    }
+    
+    /**
+     * @notice Internal function to save comet address to strategy storage
+     * @param asset The asset address
+     * @param comet The Comet address to save
+     */
+    function _saveCometToStrategy(address asset, address comet) internal {
+        // Get strategy address from vault's storage
+        address strategyAddress;
+        assembly {
+            // Strategy is at storage slot 8 in BolarityVault
+            strategyAddress := sload(8)
+        }
+        
+        // Check if comet is already configured
+        (bool checkSuccess, bytes memory checkData) = strategyAddress.staticcall(
+            abi.encodeWithSelector(this.cometMarkets.selector, asset)
+        );
+        
+        if (checkSuccess && checkData.length >= 32) {
+            address existingComet = abi.decode(checkData, (address));
+            if (existingComet == comet) {
+                // Already configured with same comet, no need to update
+                return;
+            }
+        }
+        
+        // Call the strategy's setCometMarket function if not configured or different
+        // This requires the strategy owner to be the vault
+        (bool success, ) = strategyAddress.call(
+            abi.encodeWithSelector(this.setCometMarket.selector, asset, comet)
+        );
+        
+        // If the call fails (e.g., not owner), continue anyway
+        // The comet is still valid for this transaction
+        if (!success) {
+            // Could emit an event or handle differently if needed
+            // For now, we just continue as the comet is valid
+        }
     }
     
     /**
@@ -164,20 +211,43 @@ contract CompoundStrategy is IStrategy, Ownable {
      * @notice Invest assets into Compound V3 (delegatecall from vault)
      * @param asset The asset to invest  
      * @param amountIn The amount to invest
+     * @param data Optional: can contain the comet address to auto-configure
      * @return accounted The amount accounted for (same as input for Compound V3)
      * @return entryGain No entry gain for Compound V3
      */
     function investDelegate(
         address asset,
         uint256 amountIn,
-        bytes calldata /* data */
+        bytes calldata data
     ) external override returns (uint256 accounted, uint256 entryGain) {
         if (amountIn == 0) {
             return (0, 0);
         }
         
-        // Get the Comet for this asset in delegatecall context
-        address comet = _getCometInDelegateCall(asset);
+        address comet;
+        
+        // Check if comet address is provided in data
+        if (data.length >= 32) {
+            // Decode comet address from data
+            address providedComet = abi.decode(data, (address));
+            
+            // Verify if provided comet is valid
+            if (providedComet != address(0)) {
+                // Verify the Comet's base token matches
+                require(IComet(providedComet).baseToken() == asset, "CompoundStrategy: Asset mismatch");
+                
+                // Auto-configure: Save the comet for this asset
+                _saveCometToStrategy(asset, providedComet);
+                
+                comet = providedComet;
+            } else {
+                // Get the Comet for this asset in delegatecall context
+                comet = _getCometInDelegateCall(asset);
+            }
+        } else {
+            // Get the Comet for this asset in delegatecall context
+            comet = _getCometInDelegateCall(asset);
+        }
         
         // Approve and supply to Comet
         // In delegatecall context, this = vault

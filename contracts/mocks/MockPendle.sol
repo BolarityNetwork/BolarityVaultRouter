@@ -55,6 +55,76 @@ contract MockPendleRouter {
         marketToPT[market] = pt;
     }
     
+    // Fallback function to handle raw calldata from strategy
+    fallback() external payable {
+        // Parse the function selector (first 4 bytes)
+        bytes4 selector = bytes4(msg.data[:4]);
+        
+        // Check if it's swapExactTokenForPt (0x12345678 in test)
+        if (selector == bytes4(0x12345678)) {
+            // Parse parameters from calldata
+            // offset 4: receiver (32 bytes)
+            // offset 36: market (32 bytes)
+            // offset 68: minPtOut (32 bytes)
+            // offset 100: netTokenIn (32 bytes)
+            // offset 132: tokenIn (32 bytes)
+            
+            address receiver = address(uint160(uint256(bytes32(msg.data[4:36]))));
+            address market = address(uint160(uint256(bytes32(msg.data[36:68]))));
+            uint256 netTokenIn = uint256(bytes32(msg.data[100:132]));
+            address tokenIn = address(uint160(uint256(bytes32(msg.data[132:164]))));
+            
+            // Get PT from market
+            address ptAddress = marketToPT[market];
+            require(ptAddress != address(0), "MockPendleRouter: PT not found");
+            
+            // Transfer tokens from caller
+            IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), netTokenIn);
+            
+            // Calculate PT output with discount
+            uint256 netPtOut = (netTokenIn * PT_DISCOUNT_RATE) / 100;
+            
+            // Mint PT to receiver
+            MockPendlePT(ptAddress).mint(receiver, netPtOut);
+            
+            // Return success (no return data needed for this mock)
+            assembly {
+                return(0, 0)
+            }
+        }
+        // Check if it's swapExactPtForToken (0x87654321 in test)
+        else if (selector == bytes4(0x87654321)) {
+            // Parse parameters
+            address receiver = address(uint160(uint256(bytes32(msg.data[4:36]))));
+            address market = address(uint160(uint256(bytes32(msg.data[36:68]))));
+            uint256 exactPtIn = uint256(bytes32(msg.data[68:100]));
+            address tokenOut = address(uint160(uint256(bytes32(msg.data[100:132]))));
+            
+            // Get PT from market
+            address ptAddress = marketToPT[market];
+            require(ptAddress != address(0), "MockPendleRouter: PT not found");
+            
+            // Transfer PT from caller
+            IERC20(ptAddress).safeTransferFrom(msg.sender, address(this), exactPtIn);
+            
+            // Calculate underlying output (reverse of discount)
+            uint256 netTokenOut = (exactPtIn * 100) / PT_DISCOUNT_RATE;
+            
+            // Mint underlying to receiver
+            MockERC20(tokenOut).mint(receiver, netTokenOut);
+            
+            // Return success
+            assembly {
+                return(0, 0)
+            }
+        }
+        else {
+            revert("MockPendleRouter: Unknown function");
+        }
+    }
+    
+    receive() external payable {}
+    
     enum SwapType {
         NONE,
         KYBERSWAP,

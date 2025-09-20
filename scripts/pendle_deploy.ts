@@ -1,19 +1,48 @@
 
 import { ethers } from "hardhat";
 import {ContractFactory, MaxUint256, ZeroAddress} from 'ethers'
+import { callConvertAPI, printConvertOutput } from "./helper";
 const PendleRouter = require('../artifacts/contracts/interfaces/IPendle.sol/IPendleRouter.json')
 const PendleOracle = require('../artifacts/contracts/interfaces/IPendle.sol/IPendleOracle.json')
+const PendleMarket = require('../artifacts/contracts/interfaces/IPendle.sol/IPendleMarket.json')
 
-const REGISTER            = "0xFf80cbF786406959F6C2f04b3dcF439B408AD93A";
-const VAULT_FACTORY       = "0x6E0d96c86df60237E61C388C3Df65664Dad3aB9D";
-const BOLARITY_ROUTER     = "0x864310c6355538585a444C735d4298B05EcBbeef";
-const PENDLE_STRATEGY     = "0xF79c3d0B5F6c5a6798E6Aa08475b99039af77432";
+const REGISTER            = "0x75971D67503Ff0BD74cf53A531Cfa49e78e831e8";
+const VAULT_FACTORY       = "0x73327F71E7A756B68040fA9FEF68b602E35e633d";
+const BOLARITY_ROUTER     = "0x1db547B5Ce21661A32A290C09DBA5F83E0Bb0081";
+const PENDLE_STRATEGY     = "0xFaBE35dBF80Ea83046ea9aba5f998cf177fa6c4d";
 const UNDERLYING_ASSET    = "0x35E5dB674D8e93a03d814FA0ADa70731efe8a4b9"; // USR
 const PENDLE_ROUTER       = "0x888888888889758f76e7103c6cbf23abbf58f946";
 const PENDLE_ORACLE       = "0x9a9fa8338dd5e5b2188006f1cd2ef26d921650c2";
 const PENDLE_MARKET       = "0x715509bde846104cf2ccebf6fdf7ef1bb874bc45";
 const PENDLE_PT           = "0xa6F0A4D18B6f6DdD408936e81b7b3A8BEFA18e77";
 
+async function swapTokenToPt(amountsIn:string, receiver:string) {
+    const resp = await callConvertAPI(8453, {
+        tokensIn: UNDERLYING_ASSET,
+        amountsIn,
+        tokensOut: PENDLE_PT,
+        receiver: receiver,
+        slippage: 0.01, // 1% slippage
+    });
+
+    // printConvertOutput(resp);
+
+    return resp.data.routes[0].tx.data;
+}
+
+async function swapPtToToken(amountsIn:string, receiver:string, slippageOverride?:number) {
+    const resp = await callConvertAPI(8453, {
+        tokensIn: PENDLE_PT,
+        amountsIn: amountsIn,
+        tokensOut: UNDERLYING_ASSET,
+        receiver: receiver,
+        slippage: slippageOverride || 0.02, // Increased default slippage to 2%
+    });
+
+    // printConvertOutput(resp);
+
+    return resp.data.routes[0].tx.data;
+}
 
 async function main() {
   // console.log("Starting deployment...");
@@ -45,8 +74,8 @@ async function main() {
   // const PendlePTStrategy = await ethers.deployContract("PendlePTStrategy", [PENDLE_ROUTER, PENDLE_ORACLE]);
   // await PendlePTStrategy.waitForDeployment();
   // console.log(`PendlePTStrategy deployed to ${PendlePTStrategy.target}`);
-  // await PendlePTStrategy.setPendleMarket(UNDERLYING_ASSET, PENDLE_MARKET, PENDLE_PT);
-  // console.log(`PendlePTStrategy set market`);
+  // // await PendlePTStrategy.setPendleMarket(UNDERLYING_ASSET, PENDLE_MARKET, PENDLE_PT);
+  // // console.log(`PendlePTStrategy set market`);
 
   // console.log("\nDeployment complete!");
   // console.log("====================");
@@ -75,7 +104,7 @@ async function main() {
 
   const market = ethers.encodeBytes32String("PENDLE-V4");
   console.log(market);
-
+  const vault = await BolarityRouter.vaultFor(UNDERLYING_ASSET,market);
   // // =====================================create vault===============================================
 
   // // Create vault using the strategy
@@ -91,37 +120,78 @@ async function main() {
   // console.log("Vault created for USDC with Compound strategy");
 
   // =====================================deposit===============================================
-
   // await MockERC20.approve(BOLARITY_ROUTER, ethers.MaxUint256);
   // console.log("Approve success");
-  // const amout = ethers.parseEther("0.01");
+  // const amout = ethers.parseEther("0.1");
+  // const calldata = await swapTokenToPt(amout.toString(), vault);
   // await BolarityRouter.deposit(
   //   UNDERLYING_ASSET, // Link address
   //   market,
   //   amout,
   //   signer.address,
-  //   '0x',
+  //   calldata,
   // );
-  // console.log("Deposit from USDC vault");
+  // console.log("Deposit from vault");
 
-  // =====================================withdraw===============================================
-
-  const vault = await BolarityRouter.vaultFor(
-  UNDERLYING_ASSET, // Link address
-  market);
+  // =====================================withdraw/redeem===============================================
+  // Option 1: Using withdraw with slippage adjustment (commented out)
   const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
   const BolarityVault = await BolarityVault_factory.attach(vault);
   await BolarityVault.approve(BOLARITY_ROUTER, ethers.MaxUint256);
   console.log("Approve success");
+  const userBalance = await BolarityRouter.getUserBalance(UNDERLYING_ASSET,market, signer.address);
+  console.log("User balance (shares):", userBalance);
+  const userAsset = await BolarityRouter.previewRedeem(UNDERLYING_ASSET,market, userBalance);
+  console.log("Expected assets from redeem:", userAsset);
+  
+  // Apply slippage tolerance (99% of expected amount to account for swap slippage)
+  const withdrawAmount = userAsset * 99n / 100n;
+  console.log("Adjusted withdraw amount (with slippage):", withdrawAmount);
+  
+  const calldata = await swapPtToToken(userAsset.toString(), vault);
+  console.log("Swap calldata generated");
+  
   await BolarityRouter.withdraw(
-    UNDERLYING_ASSET, // Link address
+    UNDERLYING_ASSET,
     market,
-    ethers.MaxUint256,
+    withdrawAmount, // Use adjusted amount instead of full userAsset
     signer.address,
     signer.address,
-    '0x',
+    calldata,
   );
-  console.log("Withdraw from USDC vault");
+  console.log("Withdraw from vault");
+
+  // // Option 2: Using redeem (recommended - works with shares directly)
+  // const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
+  // const BolarityVault = await BolarityVault_factory.attach(vault);
+  // await BolarityVault.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+  // console.log("Approve success");
+  
+  // const userBalance = await BolarityRouter.getUserBalance(UNDERLYING_ASSET, market, signer.address);
+  // console.log("User balance (shares):", userBalance);
+  
+  // const userAsset = await BolarityRouter.previewRedeem(UNDERLYING_ASSET, market, userBalance);
+  // console.log("Expected assets from redeem:", userAsset);
+  
+  // // Check PT balance in the vault
+  // const PendlePT = await ethers.getContractAt("IERC20", PENDLE_PT);
+  // const vaultPTBalance = await PendlePT.balanceOf(vault);
+  // console.log("Vault PT balance:", vaultPTBalance);
+  
+  // // Use higher slippage (3%) for the swap
+  // const calldata = await swapPtToToken(vaultPTBalance.toString(), vault, 0.03);
+  // console.log("Swap calldata generated with 3% slippage for PT amount:", vaultPTBalance.toString());
+  
+  // // Using redeem instead of withdraw - it handles shares directly
+  // await BolarityRouter.redeem(
+  //   UNDERLYING_ASSET,
+  //   market,
+  //   userBalance, // redeem all shares
+  //   signer.address,
+  //   signer.address,
+  //   calldata,
+  // );
+  // console.log("Redeem from vault");
 
 
   // =====================================mint===============================================
