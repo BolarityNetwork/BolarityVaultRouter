@@ -18,6 +18,8 @@ A clean, simple SDK for Pendle protocol arbitrage with **real-time APY calculati
 ✅ **Automatic APY Calculation** - Compound interest rates based on actual time remaining
 ✅ **Enhanced Quote Data** - All financial metrics in one object
 ✅ **Timezone Support** - Accurate countdown to PT expiry
+✅ **🆕 Multi-Token Arbitrage** - Support any ERC20 token, not just USDC
+✅ **🆕 Dynamic Decimals Query** - Automatic precision detection from blockchain
 
 ## Quick Start
 
@@ -45,8 +47,13 @@ console.log(`APY: ${quote.apyPercentage.toFixed(2)}%`);
 console.log(`Days to maturity: ${quote.daysToMaturity.toFixed(1)}`);
 console.log(`Expires: ${quote.maturityDate.toLocaleDateString()}`);
 
-// Execute arbitrage
-const result = await sdk.arbitrage(100, ptToken, market);
+// Execute arbitrage with any stablecoin
+const result = await sdk.arbitrageStablecoin(
+    CHAINS.base.usdc,  // Or any ERC20 token address
+    100,               // Amount
+    ptToken,           // PT token
+    market             // Market address
+);
 ```
 
 ## Core Classes
@@ -98,13 +105,27 @@ Returns: `TxResult`
 
 Execute a single swap transaction.
 
-### arbitrage(usdcAmount, ptToken, market, options)
+### 🆕 arbitrageStablecoin(stablecoinAddress, amount, ptToken, market, options)
 Returns: Arbitrage result object
 
-Complete USDC→PT→profit extraction flow.
+Complete stablecoin→PT→profit extraction flow with **any ERC20 token**.
+
+Parameters:
+- `stablecoinAddress`: Any ERC20 token address (USDC, USDT, DAI, etc.)
+- `amount`: Token amount to trade
+- `ptToken`: Target PT token address
+- `market`: Pendle market address
+- `options`: Configuration options
 
 Options:
 - `dryRun: true` - Simulation only
+
+### arbitrage(usdcAmount, ptToken, market, options)
+Returns: Arbitrage result object
+
+**⚠️ DEPRECATED**: Use `arbitrageStablecoin()` instead.
+
+Legacy USDC-only arbitrage flow maintained for backward compatibility.
 
 ## Supported Chains
 
@@ -198,9 +219,9 @@ return (
     </div>
 );
 
-// Execute transaction
-async function executeTransaction() {
-    const result = await sdk.arbitrage(amount, pt, market);
+// Execute transaction with any token
+async function executeTransaction(tokenAddress, amount) {
+    const result = await sdk.arbitrageStablecoin(tokenAddress, amount, pt, market);
     if (result.success) {
         setTxHash(result.step1.transaction.hash);
     }
@@ -220,7 +241,7 @@ This will demonstrate:
 2. **Maturity analysis** for different amounts
 3. **Dry run arbitrage** simulation
 4. **Single swap execution**
-5. **Full arbitrage flow**
+5. **🆕 Multi-token arbitrage flow** (supports any ERC20)
 
 ## Configuration
 
@@ -286,5 +307,35 @@ This SDK eliminates:
 - Special case handling
 - **Manual APY calculations** ⭐
 - **Hardcoded maturity dates** ⭐
+- **🆕 Token-specific hardcoding** - Works with any ERC20
+- **🆕 Decimal assumptions** - Dynamic precision query
 
 Result: Clean, predictable, maintainable code with **accurate financial data**.
+
+## 🆕 Multi-Token Examples
+
+```javascript
+// Arbitrage with USDC
+await sdk.arbitrageStablecoin(
+    '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC
+    100, ptToken, market
+);
+
+// Arbitrage with USDT
+await sdk.arbitrageStablecoin(
+    '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT
+    100, ptToken, market
+);
+
+// Arbitrage with DAI
+await sdk.arbitrageStablecoin(
+    '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', // DAI
+    100, ptToken, market
+);
+
+// The SDK automatically:
+// ✅ Queries token decimals from blockchain
+// ✅ Handles precision conversions
+// ✅ Calculates accurate APY
+// ✅ Provides consistent API regardless of token
+```
