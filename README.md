@@ -115,7 +115,7 @@ BolarityVaultRouter/
 ├── test/                  # TypeScript test files
 ├── ignition/             # Hardhat Ignition deployment modules
 │   └── modules/
-├── scripts/              # Deployment and interaction scripts
+├── scripts/              # Deployment and interaction script, as well as the SDK prototpye
 ├── artifacts/            # Compilation artifacts (auto-generated)
 ├── cache/               # Hardhat cache (auto-generated)
 ├── typechain-types/     # TypeScript type definitions (auto-generated)
