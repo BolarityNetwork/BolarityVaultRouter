@@ -316,21 +316,21 @@ class PendleSDK {
     }
 
     /**
-     * Complete arbitrage flow: USDC -> PT -> profit extraction
+     * Complete arbitrage flow: Stablecoin -> PT -> profit extraction
      * This is the "good taste" API - no special cases
      */
-    async arbitrage(usdcAmount, ptToken, market, options = {}) {
+    async arbitrageStablecoin(stablecoinAddress, amount, ptToken, market, options = {}) {
         const results = {
-            step1: null, // USDC -> PT
-            step2: null, // PT profit -> USDC
+            step1: null, // Stablecoin -> PT
+            step2: null, // PT profit -> Stablecoin
             totalProfit: 0,
             success: false
         };
 
         try {
-            // Step 1: USDC -> PT
-            this._log(`Step 1: Converting ${usdcAmount} USDC to PT`);
-            const quote1 = await this.getQuote(this.chain.usdc, ptToken, usdcAmount, market);
+            // Step 1: Stablecoin -> PT
+            this._log(`Step 1: Converting ${amount} tokens to PT`);
+            const quote1 = await this.getQuote(stablecoinAddress, ptToken, amount, market);
 
             if (!quote1.isprofitable) {
                 throw new Error('Not profitable');
@@ -352,8 +352,8 @@ class PendleSDK {
             // Step 2: Extract profit
             const profitPT = quote1.profit;
             if (profitPT > 0.01) { // Minimum profitable amount
-                this._log(`Step 2: Converting ${profitPT} PT profit to USDC`);
-                const quote2 = await this.getQuote(ptToken, this.chain.usdc, profitPT, market);
+                this._log(`Step 2: Converting ${profitPT} PT profit back to tokens`);
+                const quote2 = await this.getQuote(ptToken, stablecoinAddress, profitPT, market);
                 const tx2 = await this.executeSwap(quote2);
 
                 if (tx2.success) {
@@ -369,6 +369,14 @@ class PendleSDK {
             results.error = error.message;
             return results;
         }
+    }
+
+    /**
+     * Backward compatibility: USDC arbitrage
+     * @deprecated Use arbitrageStablecoin() instead
+     */
+    async arbitrage(usdcAmount, ptToken, market, options = {}) {
+        return this.arbitrageStablecoin(this.chain.usdc, usdcAmount, ptToken, market, options);
     }
 
     // ========== INTERNAL METHODS ==========
