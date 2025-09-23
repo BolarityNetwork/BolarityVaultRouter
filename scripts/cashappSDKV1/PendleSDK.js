@@ -20,7 +20,7 @@ const CHAINS = {
     ethereum: { id: 1, name: 'Ethereum', usdc: '0xA0b86a33E6441E1A1E5c87A3dC9E1e18e8f0b456' },
     bsc: { id: 56, name: 'BSC', usdc: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d' },
     polygon: { id: 137, name: 'Polygon', usdc: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' },
-    base: { id: 8453, name: 'Base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913' },
+    base: { id: 8453, name: 'Base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
     arbitrum: { id: 42161, name: 'Arbitrum', usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' }
 };
 
@@ -216,6 +216,12 @@ class PendleSDK {
      */
     async getQuote(tokenIn, tokenOut, amountIn, market) {
         try {
+            // Get token decimals dynamically
+            const tokenInDecimals = await this._getTokenDecimals(tokenIn);
+            console.log('Token In Decimals:', tokenInDecimals);
+            const tokenOutDecimals = await this._getTokenDecimals(tokenOut);
+            console.log('Token Out Decimals:', tokenOutDecimals);
+
             // Get swap quote
             const url = `https://api-v2.pendle.finance/core/v2/sdk/${this.chainId}/markets/${market}/swap`;
             const params = {
@@ -223,7 +229,7 @@ class PendleSDK {
                 slippage: this.slippage.toString(),
                 tokenIn,
                 tokenOut,
-                amountIn: this._toWei(amountIn, 6), // Assume USDC 6 decimals
+                amountIn: this._toWei(amountIn, tokenInDecimals),
                 enableAggregator: 'true'
             };
 
@@ -234,7 +240,7 @@ class PendleSDK {
             const maturityInfo = await this.getMaturityInfo(market);
 
             // Calculate amounts
-            const amountOut = this._fromWei(data.amountOut, 6);
+            const amountOut = this._fromWei(data.amountOut, tokenOutDecimals);
 
             // Calculate APY
             const apy = this.calculateAPY(amountIn, amountOut, maturityInfo.daysToMaturity);
@@ -424,6 +430,23 @@ class PendleSDK {
 
             await approveTx.wait();
             this._log(`Approval confirmed: ${approveTx.hash}`);
+        }
+    }
+
+    async _getTokenDecimals(tokenAddress) {
+        try {
+            // Ensure proper address format
+            const address = ethers.getAddress(tokenAddress);
+
+            // decimals() function call - no parameters needed
+            const result = await this._getProvider().call({
+                to: address,
+                data: ERC20_ABI.decimals
+            });
+            return parseInt(result, 16);
+        } catch (error) {
+            // Fail fast - never guess decimals in DeFi
+            throw new Error(`Failed to get token decimals for ${tokenAddress}: ${error.message}`);
         }
     }
 

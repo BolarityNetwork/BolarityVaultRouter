@@ -79,7 +79,7 @@ async function example2_maturityAndAPY() {
 
         // APY analysis for different amounts
         console.log('\n📊 APY Analysis for Different Amounts:');
-        const amounts = [100, 1000, 10000];
+        const amounts = [100];
 
         for (const amount of amounts) {
             try {
