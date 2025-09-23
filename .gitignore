@@ -17,5 +17,4 @@ node_modules
 ignition/deployments/chain-31337
 
 # Claude Code configuration
-CLAUDE.md
 CLAUDE.local.md
