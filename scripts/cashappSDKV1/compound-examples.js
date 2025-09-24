@@ -283,14 +283,14 @@ async function claimEarnedRewards() {
 function showMenu() {
     console.log('\n🏦 Compound SDK Interactive Examples');
     console.log('='.repeat(50));
-    console.log('选择要执行的示例:');
-    console.log('1️⃣  查看 APR 信息');
-    console.log('2️⃣  查看用户余额');
-    console.log('3️⃣  供应 USDC 到 Compound');
-    console.log('4️⃣  从 Compound 提取 USDC');
-    console.log('5️⃣  领取 COMP 奖励');
-    console.log('6️⃣  显示 CashApp 集成代码');
-    console.log('0️⃣  退出');
+    console.log('Choose an example to run:');
+    console.log('1️⃣  View APR Information');
+    console.log('2️⃣  View User Balance');
+    console.log('3️⃣  Supply USDC to Compound');
+    console.log('4️⃣  Withdraw USDC from Compound');
+    console.log('5️⃣  Claim COMP Rewards');
+    console.log('6️⃣  Show CashApp Integration Code');
+    console.log('0️⃣  Exit');
     console.log('='.repeat(50));
 }
 
@@ -316,14 +316,14 @@ async function handleChoice(choice) {
                 cashAppIntegrationExample();
                 break;
             case '0':
-                console.log('👋 再见！');
+                console.log('👋 Goodbye!');
                 process.exit(0);
                 break;
             default:
-                console.log('❌ 无效选择，请输入 0-6');
+                console.log('❌ Invalid choice, please enter 0-6');
         }
     } catch (error) {
-        console.error('💥 示例执行失败:', error.message);
+        console.error('💥 Example execution failed:', error.message);
     }
 }
 
@@ -333,8 +333,8 @@ async function main() {
 
     if (!choice) {
         showMenu();
-        console.log('\n使用方法: node compound-examples.js [选项]');
-        console.log('例如: node compound-examples.js 1');
+        console.log('\nUsage: node compound-examples.js [option]');
+        console.log('Example: node compound-examples.js 1');
         return;
     }
 

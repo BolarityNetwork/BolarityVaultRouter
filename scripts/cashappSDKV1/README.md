@@ -231,17 +231,17 @@ async function updateQuote(amount) {
 // Render enhanced UI
 return (
     <div className="pendle-quote">
-        <div>投入: {quote.amountIn} USDC</div>
-        <div>获得: {quote.amountOut.toFixed(6)} PT</div>
-        <div>利润: {quote.profit.toFixed(6)} PT</div>
+        <div>Input: {quote.amountIn} USDC</div>
+        <div>Output: {quote.amountOut.toFixed(6)} PT</div>
+        <div>Profit: {quote.profit.toFixed(6)} PT</div>
         <div className="highlight">
-            年化收益率: {quote.apyPercentage?.toFixed(2)}% 🚀
+            Annual Yield: {quote.apyPercentage?.toFixed(2)}% 🚀
         </div>
         <div className="countdown">
-            到期时间: {quote.daysToMaturity?.toFixed(1)} 天
+            Days to Maturity: {quote.daysToMaturity?.toFixed(1)} days
         </div>
         <div className="expiry">
-            到期日期: {quote.maturityDate?.toLocaleDateString()}
+            Expiry Date: {quote.maturityDate?.toLocaleDateString()}
         </div>
     </div>
 );
@@ -273,12 +273,12 @@ node src/sdk/compound-examples.js 6  # CashApp Integration Code
 ```
 
 ### Menu Options:
-1️⃣  **查看 APR 信息** - Live Compound V3 supply rates and COMP rewards
-2️⃣  **查看用户余额** - Current lending position and accrued rewards
-3️⃣  **供应 USDC** - Deposit tokens to start earning yield
-4️⃣  **提取 USDC** - Withdraw supplied tokens plus interest
-5️⃣  **领取 COMP 奖励** - Claim accumulated protocol rewards
-6️⃣  **CashApp 集成代码** - Frontend integration examples
+1️⃣  **View APR Information** - Live Compound V3 supply rates and COMP rewards
+2️⃣  **View User Balance** - Current lending position and accrued rewards
+3️⃣  **Supply USDC** - Deposit tokens to start earning yield
+4️⃣  **Withdraw USDC** - Withdraw supplied tokens plus interest
+5️⃣  **Claim COMP Rewards** - Claim accumulated protocol rewards
+6️⃣  **CashApp Integration Code** - Frontend integration examples
 
 ### Pendle Examples
 ```bash
