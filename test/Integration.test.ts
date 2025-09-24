@@ -400,8 +400,18 @@ describe("Vault System Integration", function () {
       const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
-      // Migrate strategy
-      await vaultAAVE.setStrategy(newStrategy.target);
+      // Whitelist the new strategy
+      await vaultAAVE.whitelistStrategy(newStrategy.target, true);
+
+      // Queue strategy change
+      await vaultAAVE.queueStrategyChange(newStrategy.target);
+
+      // Fast-forward time to pass the timelock (48 hours)
+      await ethers.provider.send("evm_increaseTime", [172800]); // 48 * 3600
+      await ethers.provider.send("evm_mine", []);
+
+      // Execute strategy change
+      await vaultAAVE.executeStrategyChange();
 
       // Since MockStrategy doesn't actually move funds, they remain in vault
       // Just verify the strategy was changed and totalAssets remains the same

@@ -286,7 +286,15 @@ describe("BolarityVault", function () {
       const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
-      await expect(vault.setStrategy(newStrategy.target))
+      // New process: whitelist, queue, wait, execute
+      await vault.whitelistStrategy(newStrategy.target, true);
+      await vault.queueStrategyChange(newStrategy.target);
+      
+      // Fast forward time by 48 hours
+      await ethers.provider.send("evm_increaseTime", [48 * 3600]);
+      await ethers.provider.send("evm_mine", []);
+      
+      await expect(vault.executeStrategyChange())
         .to.emit(vault, "StrategyChanged")
         .withArgs(mockStrategy.target, newStrategy.target);
 
@@ -301,21 +309,32 @@ describe("BolarityVault", function () {
       await newStrategy.waitForDeployment();
 
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
-      await vault.setStrategy(newStrategy.target);
+      
+      // New process: whitelist, queue, wait, execute
+      await vault.whitelistStrategy(newStrategy.target, true);
+      await vault.queueStrategyChange(newStrategy.target);
+      
+      // Fast forward time by 48 hours
+      await ethers.provider.send("evm_increaseTime", [48 * 3600]);
+      await ethers.provider.send("evm_mine", []);
+      
+      await vault.executeStrategyChange();
 
       // Verify funds remain in vault (since strategies use delegatecall)
       expect(await mockToken.balanceOf(vault.target)).to.equal(vaultBalanceBefore);
     });
 
     it("Should revert if non-owner tries to change strategy", async function () {
+      // The setStrategy function now reverts with a specific message
       await expect(
         vault.connect(user1).setStrategy(user2.address)
-      ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount")
     });
 
-    it("Should revert with zero address strategy", async function () {
+    it("Should revert when trying to queue zero address strategy", async function () {
+      // Try to queue zero address (should fail at whitelist check)
       await expect(
-        vault.setStrategy(ethers.ZeroAddress)
+        vault.queueStrategyChange(ethers.ZeroAddress)
       ).to.be.revertedWith("BolarityVault: Invalid strategy");
     });
   });
