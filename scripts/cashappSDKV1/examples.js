@@ -5,7 +5,7 @@
  * Linus Philosophy: "Show, don't tell"
  * These examples demonstrate real-world usage patterns
  */
-
+require('dotenv').config();
 const { PendleSDK, CHAINS } = require('./PendleSDK');
 
 // ========== CONFIGURATION ==========
@@ -119,11 +119,12 @@ async function example3_dryRunArbitrage() {
     const sdk = new PendleSDK(config);
 
     try {
-        const result = await sdk.arbitrage(
-            100,        // 100 USDC
-            PT_TOKEN,   // PT Token
+        const result = await sdk.arbitrageStablecoin(
+            CHAINS.base.usdc,  // USDC address
+            100,               // 100 tokens
+            PT_TOKEN,          // PT Token
             MARKET,
-            { dryRun: true }  // No actual transactions
+            { dryRun: true }   // No actual transactions
         );
 
         console.log('✅ Arbitrage Simulation:');
@@ -194,8 +195,9 @@ async function example5_fullArbitrage() {
     const sdk = new PendleSDK(config);
 
     try {
-        const result = await sdk.arbitrage(
-            10,         // 10 USDC (small amount for testing)
+        const result = await sdk.arbitrageStablecoin(
+            CHAINS.base.usdc,  // USDC address
+            100,               // 100 tokens
             PT_TOKEN,
             MARKET
         );
@@ -269,9 +271,9 @@ async function getQuote(amount) {
 }
 
 // Execute transaction
-async function executeArbitrage(amount) {
+async function executeArbitrage(tokenAddress, amount) {
     try {
-        const result = await sdk.arbitrage(amount, PT_TOKEN, MARKET);
+        const result = await sdk.arbitrageStablecoin(tokenAddress, amount, PT_TOKEN, MARKET);
 
         if (result.success) {
             return {
