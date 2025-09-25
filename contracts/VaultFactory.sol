@@ -7,21 +7,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./BolarityVault.sol";
 import "./interfaces/IRegistry.sol";
 
-// Minimal dummy strategy contract for vault implementation
-contract DummyStrategy {
-    function investDelegate(address, uint256, bytes memory) external pure returns (uint256, uint256) {
-        return (0, 0);
-    }
-    
-    function divestDelegate(address, uint256, bytes memory) external pure returns (uint256, uint256) {
-        return (0, 0);
-    }
-    
-    function totalUnderlying(address) external pure returns (uint256) {
-        return 0;
-    }
-}
-
 contract VaultFactory is Ownable {
     using Clones for address;
 
@@ -44,16 +29,12 @@ contract VaultFactory is Ownable {
         require(_registry != address(0), "VaultFactory: Invalid registry");
         registry = IRegistry(_registry);
         
-        // Deploy a dummy strategy contract for the implementation
-        // This is just for the implementation and won't be used
-        address dummyStrategy = address(new DummyStrategy());
-        
         vaultImplementation = address(
             new BolarityVault(
                 IERC20(address(0)), // Use address(0) for implementation
                 "Implementation",
                 "IMPL",
-                dummyStrategy,     // Use dummy strategy instead of address(1)
+                address(1),         // Use address(1) as placeholder for strategy
                 address(1),
                 0
             )

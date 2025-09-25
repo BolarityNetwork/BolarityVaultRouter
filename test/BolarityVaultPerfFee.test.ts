@@ -400,15 +400,8 @@ describe("BolarityVault Performance Fee - Solution 3", function () {
       // Whitelist the new strategy first
       await vault.whitelistStrategy(newStrategy.target, true);
       
-      // Queue strategy change
-      await vault.queueStrategyChange(newStrategy.target);
-      
-      // Fast-forward time to pass the timelock (48 hours)
-      await ethers.provider.send("evm_increaseTime", [172800]); // 48 * 3600
-      await ethers.provider.send("evm_mine", []);
-      
-      // Execute strategy change
-      await vault.executeStrategyChange();
+      // Set strategy directly (no timelock)
+      await vault.setStrategy(newStrategy.target);
       
       // High water mark should be maintained
       expect(await vault.lastP()).to.equal(highWaterMark);

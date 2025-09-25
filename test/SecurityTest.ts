@@ -82,16 +82,16 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
     describe("Attack Prevention Tests", function () {
         
         it("Should prevent direct setting of non-whitelisted strategy", async function () {
-            // Attacker tries to directly set malicious strategy
+            // Attacker tries to directly set malicious strategy without whitelisting
             await expect(
                 vault.connect(owner).setStrategy(await maliciousStrategy.getAddress())
-            ).to.be.revertedWith("BolarityVault: Use queueStrategyChange instead");
+            ).to.be.revertedWith("BolarityVault: Strategy not whitelisted");
         });
         
         it("Should prevent setting strategy without whitelisting", async function () {
-            // Try to queue strategy change without whitelisting
+            // Try to set strategy without whitelisting
             await expect(
-                vault.connect(owner).queueStrategyChange(await maliciousStrategy.getAddress())
+                vault.connect(owner).setStrategy(await maliciousStrategy.getAddress())
             ).to.be.revertedWith("BolarityVault: Strategy not whitelisted");
         });
         
@@ -123,7 +123,7 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             expect(userShares).to.be.gt(0);
         });
         
-        it("Should enforce timelock for strategy changes", async function () {
+        it("Should allow immediate strategy changes without timelock", async function () {
             // First whitelist a new strategy
             const NewStrategyFactory = await ethers.getContractFactory("MaliciousStrategy");
             const newStrategy = await NewStrategyFactory.deploy();
@@ -131,22 +131,13 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             
             await vault.connect(owner).whitelistStrategy(await newStrategy.getAddress(), true);
             
-            // Queue the strategy change
-            await vault.connect(owner).queueStrategyChange(await newStrategy.getAddress());
-            
-            // Try to execute immediately (should fail)
+            // Set the strategy immediately (no timelock)
             await expect(
-                vault.connect(owner).executeStrategyChange()
-            ).to.be.revertedWith("BolarityVault: Timelock not expired");
-            
-            // Fast forward time by 48 hours
-            await ethers.provider.send("evm_increaseTime", [48 * 3600]);
-            await ethers.provider.send("evm_mine", []);
-            
-            // Now execution should succeed
-            await expect(
-                vault.connect(owner).executeStrategyChange()
+                vault.connect(owner).setStrategy(await newStrategy.getAddress())
             ).to.not.be.reverted;
+            
+            // Verify strategy was changed
+            expect(await vault.strategy()).to.equal(await newStrategy.getAddress());
         });
         
         it("Should detect and prevent EIP-7702 accounts from being whitelisted", async function () {
@@ -177,27 +168,15 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             
             // Step 2: Attacker tries various methods to set malicious strategy
             
-            // Method 1: Direct set (should fail)
+            // Method 1: Direct set without whitelist (should fail)
             await expect(
                 vault.connect(owner).setStrategy(await maliciousStrategy.getAddress())
-            ).to.be.revertedWith("BolarityVault: Use queueStrategyChange instead");
-            
-            // Method 2: Queue without whitelist (should fail)
-            await expect(
-                vault.connect(owner).queueStrategyChange(await maliciousStrategy.getAddress())
             ).to.be.revertedWith("BolarityVault: Strategy not whitelisted");
             
             // Step 3: Even if attacker somehow gets strategy whitelisted and set
             // (simulating a compromised owner scenario)
             await vault.connect(owner).whitelistStrategy(await maliciousStrategy.getAddress(), true);
-            await vault.connect(owner).queueStrategyChange(await maliciousStrategy.getAddress());
-            
-            // Fast forward timelock
-            await ethers.provider.send("evm_increaseTime", [48 * 3600]);
-            await ethers.provider.send("evm_mine", []);
-            
-            // Execute strategy change
-            await vault.connect(owner).executeStrategyChange();
+            await vault.connect(owner).setStrategy(await maliciousStrategy.getAddress());
             
             // Step 4: Now try to deposit with malicious strategy active
             // The malicious strategy tries to steal funds via delegatecall
@@ -232,15 +211,8 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             // 1. Whitelist the new strategy
             await vault.connect(owner).whitelistStrategy(await newLegitStrategy.getAddress(), true);
             
-            // 2. Queue the change
-            await vault.connect(owner).queueStrategyChange(await newLegitStrategy.getAddress());
-            
-            // 3. Wait for timelock
-            await ethers.provider.send("evm_increaseTime", [48 * 3600]);
-            await ethers.provider.send("evm_mine", []);
-            
-            // 4. Execute the change
-            await vault.connect(owner).executeStrategyChange();
+            // 2. Set the strategy immediately
+            await vault.connect(owner).setStrategy(await newLegitStrategy.getAddress());
             
             // Verify strategy was changed
             expect(await vault.strategy()).to.equal(await newLegitStrategy.getAddress());

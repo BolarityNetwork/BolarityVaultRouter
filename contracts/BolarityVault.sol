@@ -27,9 +27,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     
     // Security measures for delegatecall
     mapping(address => bool) public whitelistedStrategies;
-    uint256 public strategyUpdateDelay = 48 hours; // Time delay for strategy changes
-    uint256 public pendingStrategyTimestamp;
-    address public pendingStrategy;
     
     // Storage for name and symbol when using proxy pattern
     string private _storedName;
@@ -41,8 +38,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     event FeeCollectorUpdated(address indexed newCollector);
     event RouterUpdated(address indexed newRouter);
     event StrategyWhitelisted(address indexed strategy, bool whitelisted);
-    event StrategyChangeQueued(address indexed oldStrategy, address indexed newStrategy, uint256 executeTime);
-    event StrategyChangeExecuted(address indexed oldStrategy, address indexed newStrategy);
 
     modifier onlyWhenUnpaused() {
         require(!paused(), "BolarityVault: Paused");
@@ -64,13 +59,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             
             _asset = asset_;
             // Validate and whitelist initial strategy if provided
-            if (address(asset_) != address(0) && strategy_ != address(0)) {
-                // Since helper functions are defined later, we'll do minimal validation here
-                uint256 size;
-                assembly {
-                    size := extcodesize(strategy_)
-                }
-                require(size > 0, "BolarityVault: Strategy must be a contract");
+            if (strategy_ != address(0)) {
+                require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
                 whitelistedStrategies[strategy_] = true;
             }
             strategy = strategy_;
@@ -98,11 +88,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         
         _asset = asset_;
         // Validate and whitelist initial strategy
-        uint256 size;
-        assembly {
-            size := extcodesize(strategy_)
-        }
-        require(size > 0, "BolarityVault: Strategy must be a contract");
+        require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
         whitelistedStrategies[strategy_] = true;
         strategy = strategy_;
         feeCollector = feeCollector_;
@@ -731,34 +717,18 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         emit StrategyWhitelisted(strategy_, whitelist);
     }
     
-    // Queue strategy change with timelock
-    function queueStrategyChange(address newStrategy) external onlyOwner {
+    // Change strategy directly (no timelock)
+    function setStrategy(address newStrategy) external override onlyOwner nonReentrant {
         require(newStrategy != address(0), "BolarityVault: Invalid strategy");
         require(whitelistedStrategies[newStrategy], "BolarityVault: Strategy not whitelisted");
         require(_isContract(newStrategy), "BolarityVault: Strategy must be a contract");
         require(!_isEIP7702Account(newStrategy), "BolarityVault: EIP-7702 accounts not allowed");
-        
-        pendingStrategy = newStrategy;
-        pendingStrategyTimestamp = block.timestamp + strategyUpdateDelay;
-        
-        emit StrategyChangeQueued(strategy, newStrategy, pendingStrategyTimestamp);
-    }
-    
-    // Execute queued strategy change after timelock
-    function executeStrategyChange() external onlyOwner nonReentrant {
-        require(pendingStrategy != address(0), "BolarityVault: No pending strategy");
-        require(block.timestamp >= pendingStrategyTimestamp, "BolarityVault: Timelock not expired");
         require(!paused(), "BolarityVault: Paused");
         
         // Crystallize fees before strategy change
         _accruePerfFee();
         
         address oldStrategy = strategy;
-        address newStrategy = pendingStrategy;
-        
-        // Clear pending strategy
-        pendingStrategy = address(0);
-        pendingStrategyTimestamp = 0;
         
         // Withdraw all funds from old strategy if exists
         if (oldStrategy != address(0)) {
@@ -787,7 +757,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             }
         }
         
-        // Set new strategy (already validated in queueStrategyChange)
+        // Set new strategy
         strategy = newStrategy;
         
         // Invest idle funds into new strategy
@@ -808,12 +778,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         }
         
         emit StrategyChanged(oldStrategy, newStrategy);
-        emit StrategyChangeExecuted(oldStrategy, newStrategy);
-    }
-    
-    // Override the original setStrategy to maintain compatibility but require whitelisting
-    function setStrategy(address /* newStrategy */) external override onlyOwner nonReentrant {
-        revert("BolarityVault: Use queueStrategyChange instead");
     }
     
     // Helper function to check if address is a contract

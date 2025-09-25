@@ -286,15 +286,10 @@ describe("BolarityVault", function () {
       const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
-      // New process: whitelist, queue, wait, execute
+      // New process: whitelist and set strategy
       await vault.whitelistStrategy(newStrategy.target, true);
-      await vault.queueStrategyChange(newStrategy.target);
       
-      // Fast forward time by 48 hours
-      await ethers.provider.send("evm_increaseTime", [48 * 3600]);
-      await ethers.provider.send("evm_mine", []);
-      
-      await expect(vault.executeStrategyChange())
+      await expect(vault.setStrategy(newStrategy.target))
         .to.emit(vault, "StrategyChanged")
         .withArgs(mockStrategy.target, newStrategy.target);
 
@@ -310,15 +305,9 @@ describe("BolarityVault", function () {
 
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
       
-      // New process: whitelist, queue, wait, execute
+      // New process: whitelist and set strategy
       await vault.whitelistStrategy(newStrategy.target, true);
-      await vault.queueStrategyChange(newStrategy.target);
-      
-      // Fast forward time by 48 hours
-      await ethers.provider.send("evm_increaseTime", [48 * 3600]);
-      await ethers.provider.send("evm_mine", []);
-      
-      await vault.executeStrategyChange();
+      await vault.setStrategy(newStrategy.target);
 
       // Verify funds remain in vault (since strategies use delegatecall)
       expect(await mockToken.balanceOf(vault.target)).to.equal(vaultBalanceBefore);
@@ -334,7 +323,7 @@ describe("BolarityVault", function () {
     it("Should revert when trying to queue zero address strategy", async function () {
       // Try to queue zero address (should fail at whitelist check)
       await expect(
-        vault.queueStrategyChange(ethers.ZeroAddress)
+        vault.setStrategy(ethers.ZeroAddress)
       ).to.be.revertedWith("BolarityVault: Invalid strategy");
     });
   });
