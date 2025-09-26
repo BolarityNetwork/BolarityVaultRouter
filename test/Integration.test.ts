@@ -400,7 +400,10 @@ describe("Vault System Integration", function () {
       const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
-      // Migrate strategy
+      // Whitelist the new strategy
+      await vaultAAVE.whitelistStrategy(newStrategy.target, true);
+
+      // Set strategy directly (no timelock)
       await vaultAAVE.setStrategy(newStrategy.target);
 
       // Since MockStrategy doesn't actually move funds, they remain in vault

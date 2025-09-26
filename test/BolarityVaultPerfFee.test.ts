@@ -397,7 +397,10 @@ describe("BolarityVault Performance Fee - Solution 3", function () {
       const newStrategy = await TestAaveStrategy2.deploy(mockAavePool.target, await mockAavePool.poolDataProvider());
       await newStrategy.waitForDeployment();
       
-      // Switch strategy (this withdraws all funds from old strategy)
+      // Whitelist the new strategy first
+      await vault.whitelistStrategy(newStrategy.target, true);
+      
+      // Set strategy directly (no timelock)
       await vault.setStrategy(newStrategy.target);
       
       // High water mark should be maintained

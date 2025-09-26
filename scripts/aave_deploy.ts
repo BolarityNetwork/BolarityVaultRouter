@@ -1,117 +1,159 @@
 
 import { ethers } from "hardhat";
 
-const REGISTER            = "0x4134Ea2623B099f5d533A12bd554Bfab859bb1fA";
-const VAULT_FACTORY       = "0x5A6CebdAEdBFE0D0aaa7BfE446e33477F7175EeD";
-const BOLARITY_ROUTER     = "0x739aE684F938626065ec41321e7662aeFe058307";
-const AAVE_STRATEGY       = "0x2fe6F2DbaB76817CD03d5f2E0807ee20DED42Dc7";
-const UNDERLYING_ASSET    = "0xf8fb3713d459d7c1018bd0a49d19b4c44290ebe5"; // link
-const AAVE_POOL           = "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951";
-const AAVE_DATA_PROVIDER  = "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31";
+const REGISTER            = "0x48fc0Fc7E00D94220103FfF4331B96c6d4E491cE";
+const VAULT_FACTORY       = "0x3652f77543C6C33c7dAf474B861c8FE5A224c896";
+const BOLARITY_ROUTER     = "0xaB265575343C1e0c581aEE90ab7C343BD5588813";
+const AAVE_STRATEGY       = "0xd2DAE72BCf3b5e05e8a8a3bf1F53f528f411FddC";
 
-async function main() {
-  // console.log("Starting deployment...");
-  
-  // // 1. Deploy Registry
-  // const Registry = await ethers.deployContract("Registry", []);
-  // await Registry.waitForDeployment();
-  // console.log(`Registry deployed to ${Registry.target}`);
-  
-  // // 2. Deploy VaultFactory
-  // const VaultFactory = await ethers.deployContract("VaultFactory", [Registry.target]);
-  // await VaultFactory.waitForDeployment();
-  // console.log(`VaultFactory deployed to ${VaultFactory.target}`);
-  
-  // // 3. Deploy BolarityRouter
-  // const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, VaultFactory.target]);
-  // await BolarityRouter.waitForDeployment();
-  // console.log(`BolarityRouter deployed to ${BolarityRouter.target}`);
-  
-  // // 4. Transfer Registry ownership to VaultFactory
-  // await Registry.transferOwnership(VaultFactory.target);
-  // console.log("Registry ownership transferred to VaultFactory");
-  
-  // // 5. Set Router in VaultFactory
-  // await VaultFactory.setRouter(BolarityRouter.target);
-  // console.log("Router set in VaultFactory");
+const UNDERLYING_ASSET    = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // usdc
+const AAVE_POOL           = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5";
+const AAVE_DATA_PROVIDER  = "0xC4Fcf9893072d61Cc2899C0054877Cb752587981";
+const market              = ethers.encodeBytes32String("AAVE-V3");
+let RegistryContract:any;
+let VaultFactoryContract:any;
+let BolarityRouterContract:any;
+let AaveStrategyContract:any;
+let MockERC20Contract:any;
 
-  // // 6.Deploy AaveStrategy
-  // const AaveStrategy = await ethers.deployContract("AaveStrategy", [AAVE_POOL, AAVE_DATA_PROVIDER]);
-  // await AaveStrategy.waitForDeployment();
-  // console.log(`AaveStrategy deployed to ${AaveStrategy.target}`);
+async function deploy() {
+  console.log("Starting deployment...");
+  
+  // 1. Deploy Registry
+  const Registry = await ethers.deployContract("Registry", []);
+  await Registry.waitForDeployment();
+  console.log(`Registry deployed to ${Registry.target}`);
+  
+  // 2. Deploy VaultFactory
+  const VaultFactory = await ethers.deployContract("VaultFactory", [Registry.target]);
+  await VaultFactory.waitForDeployment();
+  console.log(`VaultFactory deployed to ${VaultFactory.target}`);
+  
+  // 3. Deploy BolarityRouter
+  const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, VaultFactory.target]);
+  await BolarityRouter.waitForDeployment();
+  console.log(`BolarityRouter deployed to ${BolarityRouter.target}`);
+  
+  // 4. Transfer Registry ownership to VaultFactory
+  let tx = await Registry.transferOwnership(VaultFactory.target);
+  tx.wait();
+  console.log("Registry ownership transferred to VaultFactory");
+  
+  // 5. Set Router in VaultFactory
+  tx = await VaultFactory.setRouter(BolarityRouter.target);
+  tx.wait();
+  console.log("Router set in VaultFactory");
 
-  // console.log("Register atoken");
-  // console.log("\nDeployment complete!");
-  // console.log("====================");
-  // console.log("Registry:", Registry.target);
-  // console.log("VaultFactory:", VaultFactory.target);
-  // console.log("BolarityRouter:", BolarityRouter.target);
-  // console.log("AaveStrategy:", AaveStrategy.target);
+  // 6.Deploy AaveStrategy
+  const AaveStrategy = await ethers.deployContract("AaveStrategy", [AAVE_POOL, AAVE_DATA_PROVIDER]);
+  await AaveStrategy.waitForDeployment();
+  console.log(`AaveStrategy deployed to ${AaveStrategy.target}`);
 
+  console.log("\nDeployment complete!");
+  console.log("====================");
+  console.log("Registry:", Registry.target);
+  console.log("VaultFactory:", VaultFactory.target);
+  console.log("BolarityRouter:", BolarityRouter.target);
+  console.log("AaveStrategy:", AaveStrategy.target);
+  // =====================================create vault===============================================
+
+  // Create vault using the strategy
+  tx = await VaultFactory.createVault(
+    UNDERLYING_ASSET, // Link address
+    market,
+    AaveStrategy.target,
+    process.env.FEE_COLLECTOR!, // fee collector
+    2000, // 20% performance fee
+    "AAVE USDC Vault",
+    "AUV"
+  );
+  await tx.wait();
+  console.log("Creating an Aave strategy vault");
+}
+
+async function attchContract() {
   const Registry_factory = await ethers.getContractFactory("Registry");
-  const Registry = await Registry_factory.attach(REGISTER);
+  RegistryContract = await Registry_factory.attach(REGISTER);
 
   const VaultFactory_factory = await ethers.getContractFactory("VaultFactory");
-  const VaultFactory = await VaultFactory_factory.attach(VAULT_FACTORY);
+  VaultFactoryContract = await VaultFactory_factory.attach(VAULT_FACTORY);
 
   const BolarityRouter_factory = await ethers.getContractFactory("BolarityRouter");
-  const BolarityRouter = await BolarityRouter_factory.attach(BOLARITY_ROUTER);
+  BolarityRouterContract = await BolarityRouter_factory.attach(BOLARITY_ROUTER);
 
   const AaveStrategy_factory = await ethers.getContractFactory("AaveStrategy");
-  const AaveStrategy = await AaveStrategy_factory.attach(AAVE_STRATEGY);
+  AaveStrategyContract = await AaveStrategy_factory.attach(AAVE_STRATEGY);
 
   const MockERC20_factory = await ethers.getContractFactory("MockERC20");
-  const MockERC20 = await MockERC20_factory.attach(UNDERLYING_ASSET);
+  MockERC20Contract = await MockERC20_factory.attach(UNDERLYING_ASSET);
+}
+
+async function deposit(amout:bigint, reciver:string) {
+  // Check current allowance
+  const currentAllowance = await MockERC20Contract.allowance(reciver, BOLARITY_ROUTER);
+  
+  // Only approve if current allowance is insufficient
+  if (currentAllowance < amout) {
+    let approveTx = await MockERC20Contract.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+    await approveTx.wait();
+    console.log("Approval granted for deposit");
+  }
+
+  let tx = await BolarityRouterContract.deposit(
+    UNDERLYING_ASSET,
+    market,
+    amout,
+    reciver,
+    '0x',
+  );
+  await tx.wait();
+  console.log("Deposit underlying asset");
+}
+
+
+async function withdraw(amout:bigint, reciver:string) {
+  const vault = await BolarityRouterContract.vaultFor(
+  UNDERLYING_ASSET,
+  market);
+  const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
+  const BolarityVaultContract = await BolarityVault_factory.attach(vault);
+
+  const currentAllowance = await BolarityVaultContract.allowance(reciver, BOLARITY_ROUTER);
+
+  // Only approve if current allowance is insufficient
+  if (currentAllowance < amout) {
+    let approveTx = await BolarityVaultContract.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+    await approveTx.wait();
+    console.log("Approval granted for withdraw");
+  }
+
+  console.log("Approve success");
+  await BolarityRouterContract.withdraw(
+    UNDERLYING_ASSET,
+    market,
+    amout,
+    reciver,
+    reciver,
+    '0x',
+  );
+  console.log("Withdraw from link vault");
+}
+
+async function main() {
+
+  // await deploy();
+
+  await attchContract();
 
   const signer = await ethers.provider.getSigner();
-  const market = ethers.encodeBytes32String("AAVE-V3");
-  // console.log(market);
-
-  // // =====================================create vault===============================================
-
-  // // Create vault using the strategy
-  // await VaultFactory.createVault(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   AaveStrategy.target,
-  //   signer.address, // fee collector
-  //   2000, // 20% performance fee
-  //   "Bolarity Link Vault",
-  //   "LinkV"
-  // );
-  // console.log("Vault created for Link with Aave strategy");
 
   // =====================================deposit===============================================
-
-  // await MockERC20.approve(BOLARITY_ROUTER, ethers.MaxUint256);
-  // const amout = ethers.parseEther('1');
-  // await BolarityRouter.deposit(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   amout,
-  //   signer.address,
-  //   '0x',
-  // );
-  // console.log("Deposit from link vault");
+  // const amout = 1000000n; // 1 USDT
+  // await deposit(amout, signer.address);
 
   // =====================================withdraw===============================================
+  withdraw(ethers.MaxUint256, signer.address)
 
-  // const vault = await BolarityRouter.vaultFor(
-  // UNDERLYING_ASSET, // Link address
-  // market);
-  // const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
-  // const BolarityVault = await BolarityVault_factory.attach(vault);
-  // await BolarityVault.approve(BOLARITY_ROUTER, ethers.MaxUint256);
-  // console.log("Approve success");
-  // await BolarityRouter.withdraw(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   ethers.MaxUint256,
-  //   signer.address,
-  //   signer.address,
-  //   '0x',
-  // );
-  // console.log("Withdraw from link vault");
 
 
   // =====================================mint===============================================

@@ -286,6 +286,9 @@ describe("BolarityVault", function () {
       const newStrategy = await MockStrategy.deploy();
       await newStrategy.waitForDeployment();
 
+      // New process: whitelist and set strategy
+      await vault.whitelistStrategy(newStrategy.target, true);
+      
       await expect(vault.setStrategy(newStrategy.target))
         .to.emit(vault, "StrategyChanged")
         .withArgs(mockStrategy.target, newStrategy.target);
@@ -301,6 +304,9 @@ describe("BolarityVault", function () {
       await newStrategy.waitForDeployment();
 
       const vaultBalanceBefore = await mockToken.balanceOf(vault.target);
+      
+      // New process: whitelist and set strategy
+      await vault.whitelistStrategy(newStrategy.target, true);
       await vault.setStrategy(newStrategy.target);
 
       // Verify funds remain in vault (since strategies use delegatecall)
@@ -308,12 +314,14 @@ describe("BolarityVault", function () {
     });
 
     it("Should revert if non-owner tries to change strategy", async function () {
+      // The setStrategy function now reverts with a specific message
       await expect(
         vault.connect(user1).setStrategy(user2.address)
-      ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount")
     });
 
-    it("Should revert with zero address strategy", async function () {
+    it("Should revert when trying to queue zero address strategy", async function () {
+      // Try to queue zero address (should fail at whitelist check)
       await expect(
         vault.setStrategy(ethers.ZeroAddress)
       ).to.be.revertedWith("BolarityVault: Invalid strategy");

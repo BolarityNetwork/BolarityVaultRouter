@@ -16,29 +16,29 @@ const config: HardhatUserConfig = {
     hardhat: {
     },
     sepolia: {
-          url: process.env.EVM_RPC!,
+          url: process.env.EVM_RPC! || '',
           chainId: 11155111,
           accounts: [
-              process.env.PRIVATE!,
+              process.env.PRIVATE! || "0x0000000000000000000000000000000000000000000000000000000000000000",
           ]
     },
     base: {
-          url: process.env.EVM_RPC!,
+          url: process.env.EVM_RPC! || '',
           chainId: 8453,
           accounts: [
-              process.env.PRIVATE!,
+              process.env.PRIVATE! || "0x0000000000000000000000000000000000000000000000000000000000000000",
           ]
     },
     hoodi: {
-          url: process.env.EVM_RPC!,
+          url: process.env.EVM_RPC! || '',
           chainId: 560048,
           accounts: [
-              process.env.PRIVATE!,
+              process.env.PRIVATE! || "0x0000000000000000000000000000000000000000000000000000000000000000",
           ]
     },
   },
   etherscan: {
-    apiKey: process.env.API_KEY!,
+    apiKey: process.env.API_KEY! || '',
     customChains: [
       {
         network: "hoodi",

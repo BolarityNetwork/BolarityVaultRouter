@@ -31,10 +31,10 @@ contract VaultFactory is Ownable {
         
         vaultImplementation = address(
             new BolarityVault(
-                IERC20(address(1)),
+                IERC20(address(0)), // Use address(0) for implementation
                 "Implementation",
                 "IMPL",
-                address(1),
+                address(1),         // Use address(1) as placeholder for strategy
                 address(1),
                 0
             )

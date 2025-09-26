@@ -25,6 +25,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
 
     bool private _initialized;
     
+    // Security measures for delegatecall
+    mapping(address => bool) public whitelistedStrategies;
+    
     // Storage for name and symbol when using proxy pattern
     string private _storedName;
     string private _storedSymbol;
@@ -34,6 +37,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     event PerformanceFeeUpdated(uint16 newFeeBps);
     event FeeCollectorUpdated(address indexed newCollector);
     event RouterUpdated(address indexed newRouter);
+    event StrategyWhitelisted(address indexed strategy, bool whitelisted);
 
     modifier onlyWhenUnpaused() {
         require(!paused(), "BolarityVault: Paused");
@@ -54,6 +58,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             require(perfFeeBps_ <= FEE_BPS_MAX, "BolarityVault: Fee too high");
             
             _asset = asset_;
+            // Validate and whitelist initial strategy if provided
+            if (strategy_ != address(0)) {
+                require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
+                whitelistedStrategies[strategy_] = true;
+            }
             strategy = strategy_;
             feeCollector = feeCollector_;
             perfFeeBps = perfFeeBps_;
@@ -78,6 +87,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(perfFeeBps_ <= FEE_BPS_MAX, "BolarityVault: Fee too high");
         
         _asset = asset_;
+        // Validate and whitelist initial strategy
+        require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
+        whitelistedStrategies[strategy_] = true;
         strategy = strategy_;
         feeCollector = feeCollector_;
         perfFeeBps = perfFeeBps_;
@@ -570,6 +582,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     function _executeDeposit(uint256 assets, address receiver, uint256 A0, uint256 S0, bytes memory strategyData) internal returns (uint256 shares) {
         uint256 toInvest = assets;
         
+        // Validate strategy before delegatecall
+        require(whitelistedStrategies[strategy], "BolarityVault: Strategy not whitelisted");
+        require(_isContract(strategy), "BolarityVault: Invalid strategy");
+        
         // Execute strategy via delegatecall
         (bool success, bytes memory returnData) = strategy.delegatecall(
             abi.encodeWithSignature("investDelegate(address,uint256,bytes)", asset(), toInvest, strategyData)
@@ -651,6 +667,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         if (idle < assets) {
             uint256 toWithdraw = assets - idle;
             
+            // Validate strategy before delegatecall
+            require(whitelistedStrategies[strategy], "BolarityVault: Strategy not whitelisted");
+            require(_isContract(strategy), "BolarityVault: Invalid strategy");
+            
             // Execute strategy via delegatecall
             (bool success, bytes memory returnData) = strategy.delegatecall(
                 abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, strategyData)
@@ -685,9 +705,24 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         }
     }
 
-    // Strategy management
+    // Strategy whitelisting functions
+    function whitelistStrategy(address strategy_, bool whitelist) external onlyOwner {
+        require(strategy_ != address(0), "BolarityVault: Invalid strategy");
+        
+        // Verify it's a contract and not an EOA or EIP-7702 account
+        require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
+        require(!_isEIP7702Account(strategy_), "BolarityVault: EIP-7702 accounts not allowed");
+        
+        whitelistedStrategies[strategy_] = whitelist;
+        emit StrategyWhitelisted(strategy_, whitelist);
+    }
+    
+    // Change strategy directly (no timelock)
     function setStrategy(address newStrategy) external override onlyOwner nonReentrant {
         require(newStrategy != address(0), "BolarityVault: Invalid strategy");
+        require(whitelistedStrategies[newStrategy], "BolarityVault: Strategy not whitelisted");
+        require(_isContract(newStrategy), "BolarityVault: Strategy must be a contract");
+        require(!_isEIP7702Account(newStrategy), "BolarityVault: EIP-7702 accounts not allowed");
         require(!paused(), "BolarityVault: Paused");
         
         // Crystallize fees before strategy change
@@ -743,6 +778,35 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         }
         
         emit StrategyChanged(oldStrategy, newStrategy);
+    }
+    
+    // Helper function to check if address is a contract
+    function _isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(account)
+        }
+        return size > 0;
+    }
+    
+    // Helper function to detect EIP-7702 delegated accounts
+    function _isEIP7702Account(address account) internal view returns (bool) {
+        // Check if the account has the EIP-7702 delegation prefix (0xef0100)
+        bytes memory code;
+        assembly {
+            let size := extcodesize(account)
+            if gt(size, 2) {
+                code := mload(0x40)
+                mstore(0x40, add(code, size))
+                extcodecopy(account, code, 0, 3)
+            }
+        }
+        
+        if (code.length >= 3) {
+            // Check for EIP-7702 prefix: 0xef0100
+            return code[0] == 0xef && code[1] == 0x01 && code[2] == 0x00;
+        }
+        return false;
     }
 
     function emergencyWithdraw() external onlyOwner {
