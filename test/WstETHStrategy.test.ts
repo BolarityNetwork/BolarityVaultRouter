@@ -43,6 +43,7 @@ describe("WstETHStrategy", function () {
       "Bolarity wstETH Vault",
       "bwstETH",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -55,6 +56,10 @@ describe("WstETHStrategy", function () {
     // Approve vault to spend stETH
     await mockStETH.connect(user1).approve(vault.target, ethers.MaxUint256);
     await mockStETH.connect(user2).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize users to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user1.address, true);
+    await vault.connect(owner).setAuthorizedCaller(user2.address, true);
   });
 
   describe("Deployment", function () {
@@ -190,13 +195,17 @@ describe("WstETHStrategy", function () {
         "Wrong Vault",
         "bWRONG",
         strategy.target,
-        feeCollector.address,
+        owner.address, // router
+      feeCollector.address,
         PERFORMANCE_FEE_BPS
       );
       await wrongVault.waitForDeployment();
 
       await wrongToken.mint(user1.address, DEPOSIT_AMOUNT);
       await wrongToken.connect(user1).approve(wrongVault.target, ethers.MaxUint256);
+      
+      // Authorize user to call vault directly for testing
+      await wrongVault.connect(owner).setAuthorizedCaller(user1.address, true);
 
       await expect(
         wrongVault.connect(user1).deposit(DEPOSIT_AMOUNT, user1.address)

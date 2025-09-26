@@ -1,10 +1,10 @@
 
 import { ethers } from "hardhat";
 
-const REGISTER            = "0x48fc0Fc7E00D94220103FfF4331B96c6d4E491cE";
-const VAULT_FACTORY       = "0x3652f77543C6C33c7dAf474B861c8FE5A224c896";
-const BOLARITY_ROUTER     = "0xaB265575343C1e0c581aEE90ab7C343BD5588813";
-const AAVE_STRATEGY       = "0xd2DAE72BCf3b5e05e8a8a3bf1F53f528f411FddC";
+const REGISTER            = "0xFD9880ce68F9f5BE5BC4F8E2eeeE050b5778A27F";
+const VAULT_FACTORY       = "0xFab6FeA54C1f80e82286A22983F9A4CCcDe0C081";
+const BOLARITY_ROUTER     = "0xF83C58720ABC8a8fEA85F9CeeA4c6196C5721402";
+const AAVE_STRATEGY       = "0xE0b98551620Cd4637929f516d98d89E23e83021C";
 
 const UNDERLYING_ASSET    = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // usdc
 const AAVE_POOL           = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5";
@@ -24,27 +24,24 @@ async function deploy() {
   await Registry.waitForDeployment();
   console.log(`Registry deployed to ${Registry.target}`);
   
-  // 2. Deploy VaultFactory
-  const VaultFactory = await ethers.deployContract("VaultFactory", [Registry.target]);
-  await VaultFactory.waitForDeployment();
-  console.log(`VaultFactory deployed to ${VaultFactory.target}`);
-  
-  // 3. Deploy BolarityRouter
-  const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, VaultFactory.target]);
+  // 2. Deploy BolarityRouter first (before VaultFactory)
+  const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, ethers.ZeroAddress]); // Use placeholder for factory
   await BolarityRouter.waitForDeployment();
   console.log(`BolarityRouter deployed to ${BolarityRouter.target}`);
   
+  // 3. Deploy VaultFactory with router address
+  const VaultFactory = await ethers.deployContract("VaultFactory", [Registry.target, BolarityRouter.target]);
+  await VaultFactory.waitForDeployment();
+  console.log(`VaultFactory deployed to ${VaultFactory.target}`);
+  
   // 4. Transfer Registry ownership to VaultFactory
   let tx = await Registry.transferOwnership(VaultFactory.target);
-  tx.wait();
+  await tx.wait();
   console.log("Registry ownership transferred to VaultFactory");
   
-  // 5. Set Router in VaultFactory
-  tx = await VaultFactory.setRouter(BolarityRouter.target);
-  tx.wait();
-  console.log("Router set in VaultFactory");
+  // Note: No need to set router anymore, it's set in constructor
 
-  // 6.Deploy AaveStrategy
+  // 5. Deploy AaveStrategy
   const AaveStrategy = await ethers.deployContract("AaveStrategy", [AAVE_POOL, AAVE_DATA_PROVIDER]);
   await AaveStrategy.waitForDeployment();
   console.log(`AaveStrategy deployed to ${AaveStrategy.target}`);
@@ -136,7 +133,7 @@ async function withdraw(amout:bigint, reciver:string) {
     reciver,
     '0x',
   );
-  console.log("Withdraw from link vault");
+  console.log("Withdraw underlying asset");
 }
 
 async function main() {
@@ -148,11 +145,11 @@ async function main() {
   const signer = await ethers.provider.getSigner();
 
   // =====================================deposit===============================================
-  // const amout = 1000000n; // 1 USDT
-  // await deposit(amout, signer.address);
+  const amout = 100000n; // 0.1 USDT
+  await deposit(amout, signer.address);
 
   // =====================================withdraw===============================================
-  withdraw(ethers.MaxUint256, signer.address)
+  // await withdraw(ethers.MaxUint256, signer.address)
 
 
 

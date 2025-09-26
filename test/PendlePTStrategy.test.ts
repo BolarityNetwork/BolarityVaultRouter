@@ -105,6 +105,7 @@ describe("PendlePTStrategy", function () {
       "Bolarity USDC Vault",
       "bUSDC",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -120,6 +121,10 @@ describe("PendlePTStrategy", function () {
     // Approve vault to spend tokens
     await mockToken.connect(user1).approve(vault.target, ethers.MaxUint256);
     await mockToken.connect(user2).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize users to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user1.address, true);
+    await vault.connect(owner).setAuthorizedCaller(user2.address, true);
   });
 
   describe("Market Configuration", function () {

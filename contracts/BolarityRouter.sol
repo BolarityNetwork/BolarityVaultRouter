@@ -84,6 +84,9 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     ) external override nonReentrant whenNotPaused returns (uint256 shares) {
         address vault = _getVault(asset, market);
         
+        // Security check: Only allow msg.sender to withdraw their own funds or with proper approval
+        require(owner == msg.sender || IBolarityVault(vault).allowance(owner, msg.sender) > 0, "BolarityRouter: Owner must be msg.sender");
+        
         // Call withdrawWithData with the owner parameter
         // If owner == msg.sender, user withdraws their own shares
         // If owner != msg.sender, requires owner's approval to the router
@@ -125,6 +128,9 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
         bytes calldata data
     ) external override nonReentrant whenNotPaused returns (uint256 assets) {
         address vault = _getVault(asset, market);
+        
+        // Security check: Only allow msg.sender to redeem their own shares or with proper approval
+        require(owner == msg.sender || IBolarityVault(vault).allowance(owner, msg.sender) > 0, "BolarityRouter: Owner must be msg.sender");
         
         // Call redeemWithData with the owner parameter
         // If owner == msg.sender, user redeems their own shares
@@ -231,6 +237,9 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
             length == markets.length && length == amounts.length,
             "BolarityRouter: Array length mismatch"
         );
+        
+        // Security check: Only allow msg.sender to withdraw their own funds
+        require(owner == msg.sender, "BolarityRouter: Owner must be msg.sender");
         
         // Cache msg.sender to avoid multiple CALLER opcodes
         address sender = msg.sender;

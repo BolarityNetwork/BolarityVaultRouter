@@ -55,6 +55,7 @@ describe("BolarityVault Performance Fee - Solution 3", function () {
       "Test Vault",
       "tVAULT",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -70,6 +71,11 @@ describe("BolarityVault Performance Fee - Solution 3", function () {
     // Approve vault
     await mockToken.connect(user1).approve(vault.target, ethers.MaxUint256);
     await mockToken.connect(user2).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize users and fee collector to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user1.address, true);
+    await vault.connect(owner).setAuthorizedCaller(user2.address, true);
+    await vault.connect(owner).setAuthorizedCaller(feeCollector.address, true);
     
     // Approve aToken for owner to simulate gains
     await mockToken.connect(owner).approve(mockAToken.target, ethers.MaxUint256);

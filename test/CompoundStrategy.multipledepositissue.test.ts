@@ -52,6 +52,7 @@ describe("CompoundStrategy - Multiple Deposits Issue", function () {
       "Compound Vault",
       "cVAULT",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -65,6 +66,9 @@ describe("CompoundStrategy - Multiple Deposits Issue", function () {
 
     // Approve vault
     await mockToken.connect(user).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize user to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user.address, true);
   });
 
   describe("Multiple Deposits Single Withdrawal Issue Test", function () {

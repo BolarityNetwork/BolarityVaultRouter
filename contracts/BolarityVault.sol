@@ -31,6 +31,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     // Storage for name and symbol when using proxy pattern
     string private _storedName;
     string private _storedSymbol;
+    
+    // Authorization: Only allow router or direct user calls
+    mapping(address => bool) public authorizedCallers;
 
     // Events are inherited from IERC4626 (Deposit and Withdraw)
     // StrategyChanged and FeeCrystallized events are inherited from IBolarityVault
@@ -38,9 +41,20 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     event FeeCollectorUpdated(address indexed newCollector);
     event RouterUpdated(address indexed newRouter);
     event StrategyWhitelisted(address indexed strategy, bool whitelisted);
+    event AuthorizedCallerSet(address indexed caller, bool authorized);
 
     modifier onlyWhenUnpaused() {
         require(!paused(), "BolarityVault: Paused");
+        _;
+    }
+    
+    modifier onlyAuthorizedOrPublic() {
+        require(
+            msg.sender == owner() || 
+            msg.sender == router || 
+            authorizedCallers[msg.sender],
+            "BolarityVault: Unauthorized"
+        );
         _;
     }
 
@@ -49,11 +63,13 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         string memory name_,
         string memory symbol_,
         address strategy_,
+        address router_,
         address feeCollector_,
         uint16 perfFeeBps_
     ) ERC20(name_, symbol_) Ownable(msg.sender) {
         if (address(asset_) != address(0)) {
             require(strategy_ != address(0), "BolarityVault: Invalid strategy");
+            require(router_ != address(0), "BolarityVault: Invalid router");
             require(feeCollector_ != address(0), "BolarityVault: Invalid fee collector");
             require(perfFeeBps_ <= FEE_BPS_MAX, "BolarityVault: Fee too high");
             
@@ -64,9 +80,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
                 whitelistedStrategies[strategy_] = true;
             }
             strategy = strategy_;
+            router = router_;
             feeCollector = feeCollector_;
             perfFeeBps = perfFeeBps_;
-            router = msg.sender; // Initially set router to deployer
             _storedName = name_;
             _storedSymbol = symbol_;
             _initialized = true;
@@ -78,11 +94,13 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         string memory name_,
         string memory symbol_,
         address strategy_,
+        address router_,
         address feeCollector_,
         uint16 perfFeeBps_
     ) external initializer {
         require(address(asset_) != address(0), "BolarityVault: Invalid asset");
         require(strategy_ != address(0), "BolarityVault: Invalid strategy");
+        require(router_ != address(0), "BolarityVault: Invalid router");
         require(feeCollector_ != address(0), "BolarityVault: Invalid fee collector");
         require(perfFeeBps_ <= FEE_BPS_MAX, "BolarityVault: Fee too high");
         
@@ -91,9 +109,9 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
         whitelistedStrategies[strategy_] = true;
         strategy = strategy_;
+        router = router_;
         feeCollector = feeCollector_;
         perfFeeBps = perfFeeBps_;
-        router = msg.sender; // Initially set router to deployer
         
         // Store name and symbol for proxy pattern
         _storedName = name_;
@@ -261,11 +279,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         return (shares * simulatedTotalAssets) / simulatedTotalSupply;
     }
 
-    function deposit(uint256 assets, address receiver) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+    function deposit(uint256 assets, address receiver) public override nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 shares) {
         return _depositWithData(assets, receiver, "");
     }
     
-    function depositWithData(uint256 assets, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+    function depositWithData(uint256 assets, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 shares) {
         return _depositWithData(assets, receiver, strategyData);
     }
     
@@ -296,11 +314,11 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
-    function mint(uint256 shares, address receiver) public override nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+    function mint(uint256 shares, address receiver) public override nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 assets) {
         return _mintWithData(shares, receiver, "");
     }
     
-    function mintWithData(uint256 shares, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+    function mintWithData(uint256 shares, address receiver, bytes memory strategyData) public nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 assets) {
         return _mintWithData(shares, receiver, strategyData);
     }
     
@@ -340,7 +358,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 assets,
         address receiver,
         address owner
-    ) public override nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+    ) public override nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 shares) {
         return _withdrawWithData(assets, receiver, owner, "");
     }
     
@@ -349,7 +367,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner,
         bytes memory strategyData
-    ) public nonReentrant onlyWhenUnpaused returns (uint256 shares) {
+    ) public nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 shares) {
         return _withdrawWithData(assets, receiver, owner, strategyData);
     }
     
@@ -391,8 +409,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             }
         }
         
-        // Check allowance if not owner
-        if (msg.sender != owner) {
+        // Check allowance if not owner and not router
+        if (msg.sender != owner && msg.sender != router) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
                 require(allowed >= shares, "BolarityVault: Insufficient allowance");
@@ -429,7 +447,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         uint256 shares,
         address receiver,
         address owner
-    ) public override nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+    ) public override nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 assets) {
         return _redeemWithData(shares, receiver, owner, "");
     }
     
@@ -438,7 +456,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         address receiver,
         address owner,
         bytes memory strategyData
-    ) public nonReentrant onlyWhenUnpaused returns (uint256 assets) {
+    ) public nonReentrant onlyWhenUnpaused onlyAuthorizedOrPublic returns (uint256 assets) {
         return _redeemWithData(shares, receiver, owner, strategyData);
     }
     
@@ -463,8 +481,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             _accruePerfFee();
         }
         
-        // Check allowance if not owner
-        if (msg.sender != owner) {
+        // Check allowance if not owner and not router
+        if (msg.sender != owner && msg.sender != router) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
                 require(allowed >= shares, "BolarityVault: Insufficient allowance");
@@ -575,7 +593,7 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         emit RouterUpdated(newRouter);
     }
 
-    function crystallizeFees() external {
+    function crystallizeFees() external onlyAuthorizedOrPublic {
         _accruePerfFee();
     }
 
@@ -883,5 +901,12 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
 
     function unpause() external override onlyOwner {
         _unpause();
+    }
+    
+    // Authorization management
+    function setAuthorizedCaller(address caller, bool authorized) external onlyOwner {
+        require(caller != address(0), "BolarityVault: Invalid caller");
+        authorizedCallers[caller] = authorized;
+        emit AuthorizedCallerSet(caller, authorized);
     }
 }

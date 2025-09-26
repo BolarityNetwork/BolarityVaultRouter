@@ -51,21 +51,23 @@ describe("Vault System Integration", function () {
     registry = await Registry.deploy();
     await registry.waitForDeployment();
 
-    const VaultFactory = await ethers.getContractFactory("VaultFactory");
-    factory = await VaultFactory.deploy(await registry.getAddress());
-    await factory.waitForDeployment();
-
-    await registry.transferOwnership(await factory.getAddress());
-
+    // Deploy Router first (needed for factory)
     const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
     router = await BolarityRouter.deploy(
       await registry.getAddress(),
-      await factory.getAddress()
+      "0x0000000000000000000000000000000000000001" // Placeholder for factory
     );
     await router.waitForDeployment();
-    
-    // Set router on factory
-    await factory.setRouter(await router.getAddress());
+
+    // Deploy VaultFactory with router
+    const VaultFactory = await ethers.getContractFactory("VaultFactory");
+    factory = await VaultFactory.deploy(
+      await registry.getAddress(),
+      await router.getAddress()
+    );
+    await factory.waitForDeployment();
+
+    await registry.transferOwnership(await factory.getAddress());
 
     // Deploy mock tokens
     const MockERC20 = await ethers.getContractFactory("MockERC20");
@@ -161,6 +163,12 @@ describe("Vault System Integration", function () {
     await vaultCompound.setRouter(await router.getAddress());
     await vaultUniswap.setRouter(await router.getAddress());
     await vaultDAI.setRouter(await router.getAddress());
+    
+    // Authorize fee collector to call vaults directly for testing
+    await vaultAAVE.setAuthorizedCaller(feeCollector.address, true);
+    await vaultCompound.setAuthorizedCaller(feeCollector.address, true);
+    await vaultUniswap.setAuthorizedCaller(feeCollector.address, true);
+    await vaultDAI.setAuthorizedCaller(feeCollector.address, true);
 
     // Set preferred market for USDC
     await factory.recoverRegistryOwnership();

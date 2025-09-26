@@ -46,9 +46,20 @@ describe("VaultFactory", function () {
     registry = await Registry.deploy();
     await registry.waitForDeployment();
 
-    // Deploy VaultFactory
+    // Deploy Router first (needed for factory)
+    const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
+    const router = await BolarityRouter.deploy(
+      await registry.getAddress(),
+      "0x0000000000000000000000000000000000000001" // Placeholder for factory (address(1))
+    );
+    await router.waitForDeployment();
+
+    // Deploy VaultFactory with router
     const VaultFactory = await ethers.getContractFactory("VaultFactory");
-    factory = await VaultFactory.deploy(await registry.getAddress());
+    factory = await VaultFactory.deploy(
+      await registry.getAddress(), 
+      await router.getAddress()
+    );
     await factory.waitForDeployment();
 
     // Transfer registry ownership to factory so it can register vaults
@@ -71,8 +82,15 @@ describe("VaultFactory", function () {
     it("Should revert with zero registry address", async function () {
       const VaultFactory = await ethers.getContractFactory("VaultFactory");
       await expect(
-        VaultFactory.deploy(ethers.ZeroAddress)
+        VaultFactory.deploy(ethers.ZeroAddress, owner.address)
       ).to.be.revertedWith("VaultFactory: Invalid registry");
+    });
+
+    it("Should revert with zero router address", async function () {
+      const VaultFactory = await ethers.getContractFactory("VaultFactory");
+      await expect(
+        VaultFactory.deploy(owner.address, ethers.ZeroAddress)
+      ).to.be.revertedWith("VaultFactory: Invalid router");
     });
   });
 

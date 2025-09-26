@@ -49,6 +49,7 @@ describe("WstETHStrategy - Multiple Deposits Issue", function () {
       "WstETH Vault",
       "vWST",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -59,6 +60,9 @@ describe("WstETHStrategy - Multiple Deposits Issue", function () {
 
     // Approve vault to spend stETH
     await mockStETH.connect(user).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize user to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user.address, true);
   });
 
   describe("Multiple Deposits Single Withdrawal Issue Test", function () {

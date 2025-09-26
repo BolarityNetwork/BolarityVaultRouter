@@ -52,6 +52,7 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             "Bolarity USDT Vault",
             "bUSDT",
             await legitStrategy.getAddress(),
+            owner.address, // router
             await feeCollector.getAddress(),
             1000 // 10% performance fee
         );
@@ -111,6 +112,9 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             // User approves and tries to deposit
             await usdt.connect(user).approve(await vault.getAddress(), DEPOSIT_AMOUNT);
             
+            // Authorize user to call vault directly for testing
+            await vault.connect(owner).setAuthorizedCaller(await user.getAddress(), true);
+            
             // Since the malicious strategy is not whitelisted, deposit should fail
             // Note: The current legitimate strategy is whitelisted during construction
             // So this deposit should work with the legitimate strategy
@@ -156,6 +160,9 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
         it("Should successfully prevent fund theft even if malicious strategy is somehow used", async function () {
             // This is a comprehensive test showing the attack scenario
             
+            // Authorize user to call vault directly for testing
+            await vault.connect(owner).setAuthorizedCaller(await user.getAddress(), true);
+            
             // Step 1: User deposits funds with legitimate strategy
             await usdt.connect(user).approve(await vault.getAddress(), DEPOSIT_AMOUNT);
             await vault.connect(user).deposit(DEPOSIT_AMOUNT, await user.getAddress());
@@ -181,6 +188,9 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             // Step 4: Now try to deposit with malicious strategy active
             // The malicious strategy tries to steal funds via delegatecall
             await usdt.connect(user).approve(await vault.getAddress(), DEPOSIT_AMOUNT);
+            
+            // Authorize user to call vault directly for testing
+            await vault.connect(owner).setAuthorizedCaller(await user.getAddress(), true);
             
             // Even with malicious strategy, funds should be protected by other measures
             // The delegatecall will execute malicious code, but additional checks should prevent theft
@@ -225,6 +235,9 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
             // Even if a strategy is set, each deposit validates it's whitelisted
             await usdt.connect(user).approve(await vault.getAddress(), DEPOSIT_AMOUNT);
             
+            // Authorize user to call vault directly for testing
+            await vault.connect(owner).setAuthorizedCaller(await user.getAddress(), true);
+            
             // First deposit should work
             await vault.connect(user).deposit(DEPOSIT_AMOUNT, await user.getAddress());
             
@@ -235,6 +248,9 @@ describe("BolarityVault Security Test - EIP-7702 Attack Prevention", function ()
         });
         
         it("Should validate strategy on every withdrawal operation", async function () {
+            // Authorize user to call vault directly for testing
+            await vault.connect(owner).setAuthorizedCaller(await user.getAddress(), true);
+            
             // Deposit first
             await usdt.connect(user).approve(await vault.getAddress(), DEPOSIT_AMOUNT);
             await vault.connect(user).deposit(DEPOSIT_AMOUNT, await user.getAddress());

@@ -7,7 +7,10 @@ import {
   MockERC20,
   MockAavePool,
   MockAToken,
-  BolarityVault
+  BolarityVault,
+  BolarityRouter,
+  Registry,
+  VaultFactory
 } from "../typechain-types";
 
 describe("AaveStrategy", function () {
@@ -18,6 +21,9 @@ describe("AaveStrategy", function () {
   let mockAToken: MockAToken;
   let vault: BolarityVault;
   let vaultWithProdStrategy: BolarityVault;
+  let router: BolarityRouter;
+  let registry: Registry;
+  let factory: VaultFactory;
   
   let owner: SignerWithAddress;
   let user: SignerWithAddress;
@@ -26,6 +32,8 @@ describe("AaveStrategy", function () {
   const INITIAL_BALANCE = ethers.parseEther("10000");
   const DEPOSIT_AMOUNT = ethers.parseEther("1000");
   const PERFORMANCE_FEE_BPS = 1000; // 10%
+  const MARKET_AAVE = ethers.encodeBytes32String("AAVE");
+  const MARKET_AAVE_PROD = ethers.encodeBytes32String("AAVE_PROD");
 
   beforeEach(async function () {
     [owner, user, feeCollector] = await ethers.getSigners();
@@ -61,35 +69,65 @@ describe("AaveStrategy", function () {
     testStrategy = await TestAaveStrategy.deploy(mockAavePool.target, poolDataProviderAddress);
     await testStrategy.waitForDeployment();
 
-    // Deploy BolarityVault with TestAaveStrategy for testing
-    const BolarityVault = await ethers.getContractFactory("BolarityVault");
-    vault = await BolarityVault.deploy(
+    // Deploy Registry
+    const Registry = await ethers.getContractFactory("Registry");
+    registry = await Registry.deploy();
+    await registry.waitForDeployment();
+
+    // Deploy BolarityRouter
+    const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
+    router = await BolarityRouter.deploy(
+      registry.target,
+      "0x0000000000000000000000000000000000000001" // Placeholder for factory
+    );
+    await router.waitForDeployment();
+
+    // Deploy VaultFactory
+    const VaultFactory = await ethers.getContractFactory("VaultFactory");
+    factory = await VaultFactory.deploy(
+      registry.target,
+      router.target
+    );
+    await factory.waitForDeployment();
+
+    // Transfer registry ownership to factory
+    await registry.transferOwnership(factory.target);
+
+    // Create vault with TestAaveStrategy through factory
+    await factory.createVault(
       mockToken.target,
-      "Bolarity Aave Vault",
-      "bAAVE",
+      MARKET_AAVE,
       testStrategy.target,
       feeCollector.address,
-      PERFORMANCE_FEE_BPS
+      PERFORMANCE_FEE_BPS,
+      "Bolarity Aave Vault",
+      "bAAVE"
     );
-    await vault.waitForDeployment();
-    
-    // Deploy another vault with production AaveStrategy
-    vaultWithProdStrategy = await BolarityVault.deploy(
+
+    // Get vault address from registry
+    const vaultAddress = await registry.getVault(mockToken.target, MARKET_AAVE);
+    vault = await ethers.getContractAt("BolarityVault", vaultAddress);
+
+    // Create another vault with production AaveStrategy
+    await factory.createVault(
       mockToken.target,
-      "Bolarity Aave Vault Prod",
-      "bAAVEP",
+      MARKET_AAVE_PROD,
       aaveStrategy.target,
       feeCollector.address,
-      PERFORMANCE_FEE_BPS
+      PERFORMANCE_FEE_BPS,
+      "Bolarity Aave Vault Prod",
+      "bAAVEP"
     );
-    await vaultWithProdStrategy.waitForDeployment();
+
+    // Get vault address from registry
+    const vaultProdAddress = await registry.getVault(mockToken.target, MARKET_AAVE_PROD);
+    vaultWithProdStrategy = await ethers.getContractAt("BolarityVault", vaultProdAddress);
 
     // Mint tokens to user
     await mockToken.mint(user.address, INITIAL_BALANCE);
 
-    // Approve vault to spend tokens
-    await mockToken.connect(user).approve(vault.target, ethers.MaxUint256);
-    await mockToken.connect(user).approve(vaultWithProdStrategy.target, ethers.MaxUint256);
+    // Approve router to spend tokens
+    await mockToken.connect(user).approve(router.target, ethers.MaxUint256);
   });
 
   describe("Deployment", function () {
@@ -115,8 +153,14 @@ describe("AaveStrategy", function () {
 
   describe("Integration with Vault", function () {
     it("Should invest funds when depositing to vault", async function () {
-      // Deposit to vault
-      await vault.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
+      // Deposit to vault through router
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        DEPOSIT_AMOUNT,
+        user.address,
+        "0x"
+      );
 
       // Check that funds were sent to aToken contract
       const aTokenBalance = await mockToken.balanceOf(mockAToken.target);
@@ -128,12 +172,25 @@ describe("AaveStrategy", function () {
     });
 
     it("Should withdraw funds when withdrawing from vault", async function () {
-      // First deposit
-      await vault.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
+      // First deposit through router
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        DEPOSIT_AMOUNT,
+        user.address,
+        "0x"
+      );
 
-      // Then withdraw half
+      // Then withdraw half through router
       const withdrawAmount = DEPOSIT_AMOUNT / 2n;
-      await vault.connect(user).withdraw(withdrawAmount, user.address, user.address);
+      await router.connect(user).withdraw(
+        mockToken.target,
+        MARKET_AAVE,
+        withdrawAmount,
+        user.address,
+        user.address,
+        "0x"
+      );
 
       // Check user received funds
       const userBalance = await mockToken.balanceOf(user.address);
@@ -149,24 +206,49 @@ describe("AaveStrategy", function () {
       const deposit1 = ethers.parseEther("500");
       const deposit2 = ethers.parseEther("300");
       
-      await vault.connect(user).deposit(deposit1, user.address);
-      await vault.connect(user).deposit(deposit2, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        deposit1,
+        user.address,
+        "0x"
+      );
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        deposit2,
+        user.address,
+        "0x"
+      );
 
       // Check total in aToken
       let aTokenBalance = await mockToken.balanceOf(mockAToken.target);
       expect(aTokenBalance).to.equal(deposit1 + deposit2);
 
-      // Withdraw some
+      // Withdraw some through router
       const withdraw1 = ethers.parseEther("200");
-      await vault.connect(user).withdraw(withdraw1, user.address, user.address);
+      await router.connect(user).withdraw(
+        mockToken.target,
+        MARKET_AAVE,
+        withdraw1,
+        user.address,
+        user.address,
+        "0x"
+      );
 
       aTokenBalance = await mockToken.balanceOf(mockAToken.target);
       expect(aTokenBalance).to.equal(deposit1 + deposit2 - withdraw1);
     });
 
     it("Should handle emergency withdraw", async function () {
-      // Deposit first
-      await vault.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
+      // Deposit first through router
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        DEPOSIT_AMOUNT,
+        user.address,
+        "0x"
+      );
 
       // Emergency withdraw with specific amount
       await vault["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT);
@@ -189,16 +271,29 @@ describe("AaveStrategy", function () {
     });
     
     it("AaveStrategy should return correct totalUnderlying via aToken balance", async function () {
-      // Deposit to vault with production strategy
-      await vaultWithProdStrategy.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
+      // Deposit to vault with production strategy through router
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE_PROD,
+        DEPOSIT_AMOUNT,
+        user.address,
+        "0x"
+      );
       
       // Check totalUnderlying via aToken balance
       const total = await aaveStrategy.totalUnderlying(vaultWithProdStrategy.target);
       expect(total).to.equal(DEPOSIT_AMOUNT);
       
-      // Withdraw half
+      // Withdraw half through router
       const withdrawAmount = DEPOSIT_AMOUNT / 2n;
-      await vaultWithProdStrategy.connect(user).withdraw(withdrawAmount, user.address, user.address);
+      await router.connect(user).withdraw(
+        mockToken.target,
+        MARKET_AAVE_PROD,
+        withdrawAmount,
+        user.address,
+        user.address,
+        "0x"
+      );
       
       // Check updated totalUnderlying
       const totalAfter = await aaveStrategy.totalUnderlying(vaultWithProdStrategy.target);
@@ -210,8 +305,14 @@ describe("AaveStrategy", function () {
       let total = await testStrategy.totalUnderlying(vault.target);
       expect(total).to.equal(0);
       
-      // After deposit, should show the deposited amount
-      await vault.connect(user).deposit(DEPOSIT_AMOUNT, user.address);
+      // After deposit through router, should show the deposited amount
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        DEPOSIT_AMOUNT,
+        user.address,
+        "0x"
+      );
       total = await testStrategy.totalUnderlying(vault.target);
       expect(total).to.equal(DEPOSIT_AMOUNT);
     });

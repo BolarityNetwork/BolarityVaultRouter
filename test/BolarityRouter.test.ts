@@ -41,24 +41,24 @@ describe("BolarityRouter", function () {
     registry = await Registry.deploy();
     await registry.waitForDeployment();
 
-    // Deploy VaultFactory
+    // Deploy BolarityRouter first (needs to be deployed before factory)
+    const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
+    router = await BolarityRouter.deploy(
+      await registry.getAddress(),
+      "0x0000000000000000000000000000000000000001" // Placeholder for factory (address(1))
+    );
+    await router.waitForDeployment();
+
+    // Deploy VaultFactory with router
     const VaultFactory = await ethers.getContractFactory("VaultFactory");
-    factory = await VaultFactory.deploy(await registry.getAddress());
+    factory = await VaultFactory.deploy(
+      await registry.getAddress(),
+      await router.getAddress()
+    );
     await factory.waitForDeployment();
 
     // Transfer registry ownership to factory
     await registry.transferOwnership(await factory.getAddress());
-
-    // Deploy BolarityRouter
-    const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
-    router = await BolarityRouter.deploy(
-      await registry.getAddress(),
-      await factory.getAddress()
-    );
-    await router.waitForDeployment();
-    
-    // Set router on factory
-    await factory.setRouter(await router.getAddress());
 
     // Deploy Mock Tokens
     const MockERC20 = await ethers.getContractFactory("MockERC20");
@@ -109,9 +109,7 @@ describe("BolarityRouter", function () {
     vault1 = await ethers.getContractAt("BolarityVault", vault1Address);
     vault2 = await ethers.getContractAt("BolarityVault", vault2Address);
     
-    // Set router on vaults
-    await vault1.setRouter(await router.getAddress());
-    await vault2.setRouter(await router.getAddress());
+    // Note: Vaults already have router set from factory creation, no need to set again
 
     // Mint tokens to user
     await token1.mint(user.address, INITIAL_BALANCE);
@@ -127,8 +125,10 @@ describe("BolarityRouter", function () {
       expect(await router.registry()).to.equal(await registry.getAddress());
     });
 
-    it("Should set the correct factory", async function () {
-      expect(await router.factory()).to.equal(await factory.getAddress());
+    it("Should set the factory placeholder", async function () {
+      // Router is deployed with a placeholder factory address (address(1))
+      // This is because of circular dependency between Router and Factory
+      expect(await router.factory()).to.equal("0x0000000000000000000000000000000000000001");
     });
 
     it("Should set the correct owner", async function () {

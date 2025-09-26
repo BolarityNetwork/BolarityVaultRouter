@@ -7,7 +7,10 @@ import {
   MockERC20,
   MockAavePool,
   MockAToken,
-  BolarityVault
+  BolarityVault,
+  BolarityRouter,
+  Registry,
+  VaultFactory
 } from "../typechain-types";
 
 describe("AaveStrategy - Multiple Deposits Issue", function () {
@@ -17,6 +20,9 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
   let mockAavePool: MockAavePool;
   let mockAToken: MockAToken;
   let vault: BolarityVault;
+  let router: BolarityRouter;
+  let registry: Registry;
+  let factory: VaultFactory;
   
   let owner: SignerWithAddress;
   let user: SignerWithAddress;
@@ -27,6 +33,7 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
   const SECOND_DEPOSIT = ethers.parseEther("100");
   const THIRD_DEPOSIT = ethers.parseEther("100");
   const PERFORMANCE_FEE_BPS = 1000; // 10%
+  const MARKET_AAVE = ethers.encodeBytes32String("AAVE");
 
   beforeEach(async function () {
     [owner, user, feeCollector] = await ethers.getSigners();
@@ -57,17 +64,44 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
     testStrategy = await TestAaveStrategy.deploy(mockAavePool.target, poolDataProviderAddress);
     await testStrategy.waitForDeployment();
 
-    // Deploy BolarityVault with TestAaveStrategy
-    const BolarityVault = await ethers.getContractFactory("BolarityVault");
-    vault = await BolarityVault.deploy(
+    // Deploy Registry
+    const Registry = await ethers.getContractFactory("Registry");
+    registry = await Registry.deploy();
+    await registry.waitForDeployment();
+
+    // Deploy BolarityRouter
+    const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
+    router = await BolarityRouter.deploy(
+      registry.target,
+      "0x0000000000000000000000000000000000000001" // Placeholder for factory
+    );
+    await router.waitForDeployment();
+
+    // Deploy VaultFactory
+    const VaultFactory = await ethers.getContractFactory("VaultFactory");
+    factory = await VaultFactory.deploy(
+      registry.target,
+      router.target
+    );
+    await factory.waitForDeployment();
+
+    // Transfer registry ownership to factory
+    await registry.transferOwnership(factory.target);
+
+    // Create vault through factory
+    await factory.createVault(
       mockToken.target,
-      "Test Vault",
-      "tVAULT",
+      MARKET_AAVE,
       testStrategy.target,
       feeCollector.address,
-      PERFORMANCE_FEE_BPS
+      PERFORMANCE_FEE_BPS,
+      "Test Vault",
+      "tVAULT"
     );
-    await vault.waitForDeployment();
+
+    // Get vault address from registry
+    const vaultAddress = await registry.getVault(mockToken.target, MARKET_AAVE);
+    vault = await ethers.getContractAt("BolarityVault", vaultAddress);
 
     // Mint tokens to user
     await mockToken.mint(user.address, INITIAL_BALANCE);
@@ -75,8 +109,8 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
     // Mint tokens to owner for simulating gains
     await mockToken.mint(owner.address, ethers.parseEther("100000"));
 
-    // Approve vault
-    await mockToken.connect(user).approve(vault.target, ethers.MaxUint256);
+    // Approve router instead of vault
+    await mockToken.connect(user).approve(router.target, ethers.MaxUint256);
     
     // Approve aToken for owner to simulate gains
     await mockToken.connect(owner).approve(mockAToken.target, ethers.MaxUint256);
@@ -92,21 +126,39 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // First deposit
       console.log("\n1. First deposit: 100 tokens");
-      await vault.connect(user).deposit(FIRST_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        FIRST_DEPOSIT,
+        user.address,
+        "0x"
+      );
       let shares = await vault.balanceOf(user.address);
       console.log("   Shares after first deposit:", ethers.formatEther(shares));
       console.log("   Total assets in vault:", ethers.formatEther(await vault.totalAssets()));
 
       // Second deposit
       console.log("\n2. Second deposit: 100 tokens");
-      await vault.connect(user).deposit(SECOND_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        SECOND_DEPOSIT,
+        user.address,
+        "0x"
+      );
       shares = await vault.balanceOf(user.address);
       console.log("   Shares after second deposit:", ethers.formatEther(shares));
       console.log("   Total assets in vault:", ethers.formatEther(await vault.totalAssets()));
 
       // Third deposit
       console.log("\n3. Third deposit: 100 tokens");
-      await vault.connect(user).deposit(THIRD_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        THIRD_DEPOSIT,
+        user.address,
+        "0x"
+      );
       shares = await vault.balanceOf(user.address);
       console.log("   Shares after third deposit:", ethers.formatEther(shares));
       console.log("   Total assets in vault:", ethers.formatEther(await vault.totalAssets()));
@@ -127,7 +179,14 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // Withdraw all at once
       console.log("\n5. Withdrawing all shares at once");
-      await vault.connect(user).redeem(userShares, user.address, user.address);
+      await router.connect(user).redeem(
+        mockToken.target,
+        MARKET_AAVE,
+        userShares,
+        user.address,
+        user.address,
+        "0x"
+      );
 
       // Check final balance
       const finalBalance = await mockToken.balanceOf(user.address);
@@ -160,7 +219,13 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // First deposit
       console.log("1. First deposit: 100 tokens");
-      await vault.connect(user).deposit(FIRST_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        FIRST_DEPOSIT,
+        user.address,
+        "0x"
+      );
       const firstDepositShares = await vault.balanceOf(user.address);
       console.log("   Shares from first deposit:", ethers.formatEther(firstDepositShares));
 
@@ -172,14 +237,26 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // Second deposit after yield
       console.log("\n3. Second deposit: 100 tokens (after yield)");
-      await vault.connect(user).deposit(SECOND_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        SECOND_DEPOSIT,
+        user.address,
+        "0x"
+      );
       const secondDepositShares = await vault.balanceOf(user.address) - firstDepositShares;
       console.log("   Shares from second deposit:", ethers.formatEther(secondDepositShares));
       console.log("   Total user shares:", ethers.formatEther(await vault.balanceOf(user.address)));
 
       // Third deposit
       console.log("\n4. Third deposit: 100 tokens");
-      await vault.connect(user).deposit(THIRD_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        THIRD_DEPOSIT,
+        user.address,
+        "0x"
+      );
       const totalShares = await vault.balanceOf(user.address);
       console.log("   Total user shares after all deposits:", ethers.formatEther(totalShares));
 
@@ -189,7 +266,14 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // Withdraw all
       console.log("\n6. Withdrawing all shares");
-      await vault.connect(user).redeem(totalShares, user.address, user.address);
+      await router.connect(user).redeem(
+        mockToken.target,
+        MARKET_AAVE,
+        totalShares,
+        user.address,
+        user.address,
+        "0x"
+      );
 
       const finalBalance = await mockToken.balanceOf(user.address);
       const actualReceived = finalBalance - (initialBalance - totalDeposited);
@@ -214,7 +298,13 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // First deposit
       console.log("1. First deposit: 100 tokens");
-      await vault.connect(user).deposit(FIRST_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        FIRST_DEPOSIT,
+        user.address,
+        "0x"
+      );
 
       // Simulate AAVE loss (10% loss)
       console.log("2. Simulating 10% AAVE loss");
@@ -223,11 +313,23 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // Second deposit after loss
       console.log("3. Second deposit: 100 tokens (after loss)");
-      await vault.connect(user).deposit(SECOND_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        SECOND_DEPOSIT,
+        user.address,
+        "0x"
+      );
 
       // Third deposit
       console.log("4. Third deposit: 100 tokens");
-      await vault.connect(user).deposit(THIRD_DEPOSIT, user.address);
+      await router.connect(user).deposit(
+        mockToken.target,
+        MARKET_AAVE,
+        THIRD_DEPOSIT,
+        user.address,
+        "0x"
+      );
 
       const totalDeposited = FIRST_DEPOSIT + SECOND_DEPOSIT + THIRD_DEPOSIT;
       const totalShares = await vault.balanceOf(user.address);
@@ -238,7 +340,14 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
 
       // Withdraw all
       console.log("6. Withdrawing all shares");
-      await vault.connect(user).redeem(totalShares, user.address, user.address);
+      await router.connect(user).redeem(
+        mockToken.target,
+        MARKET_AAVE,
+        totalShares,
+        user.address,
+        user.address,
+        "0x"
+      );
 
       const finalBalance = await mockToken.balanceOf(user.address);
       const actualReceived = finalBalance - (initialBalance - totalDeposited);

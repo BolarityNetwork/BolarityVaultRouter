@@ -46,6 +46,7 @@ describe("CompoundStrategy", function () {
       "Bolarity Compound V3 Vault",
       "bCOMPv3",
       strategy.target,
+      owner.address, // router
       feeCollector.address,
       PERFORMANCE_FEE_BPS
     );
@@ -59,6 +60,10 @@ describe("CompoundStrategy", function () {
     // Approve vault to spend tokens
     await mockToken.connect(user1).approve(vault.target, ethers.MaxUint256);
     await mockToken.connect(user2).approve(vault.target, ethers.MaxUint256);
+    
+    // Authorize users to call vault directly for testing
+    await vault.connect(owner).setAuthorizedCaller(user1.address, true);
+    await vault.connect(owner).setAuthorizedCaller(user2.address, true);
   });
 
   describe("Deployment", function () {
@@ -156,7 +161,8 @@ describe("CompoundStrategy", function () {
         "Wrong Vault",
         "bWRONG",
         strategy.target,
-        feeCollector.address,
+        owner.address, // router
+      feeCollector.address,
         PERFORMANCE_FEE_BPS
       );
       await wrongVault.waitForDeployment();
@@ -164,6 +170,9 @@ describe("CompoundStrategy", function () {
       // Mint and approve
       await wrongToken.mint(user1.address, DEPOSIT_AMOUNT);
       await wrongToken.connect(user1).approve(wrongVault.target, ethers.MaxUint256);
+      
+      // Authorize user to call vault directly for testing
+      await wrongVault.connect(owner).setAuthorizedCaller(user1.address, true);
       
       // Try to deposit - should fail because asset doesn't match Comet's base token
       await expect(

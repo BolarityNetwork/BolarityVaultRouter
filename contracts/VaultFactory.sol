@@ -12,7 +12,7 @@ contract VaultFactory is Ownable {
 
     address public immutable vaultImplementation;
     IRegistry public immutable registry;
-    address public router;
+    address public immutable router; // Router is set once in constructor
 
     event VaultDeployed(
         address indexed asset,
@@ -22,12 +22,12 @@ contract VaultFactory is Ownable {
         string name,
         string symbol
     );
-    
-    event RouterUpdated(address indexed newRouter);
 
-    constructor(address _registry) Ownable(msg.sender) {
+    constructor(address _registry, address _router) Ownable(msg.sender) {
         require(_registry != address(0), "VaultFactory: Invalid registry");
+        require(_router != address(0), "VaultFactory: Invalid router");
         registry = IRegistry(_registry);
+        router = _router;
         
         vaultImplementation = address(
             new BolarityVault(
@@ -35,7 +35,8 @@ contract VaultFactory is Ownable {
                 "Implementation",
                 "IMPL",
                 address(1),         // Use address(1) as placeholder for strategy
-                address(1),
+                address(1),         // Use address(1) as placeholder for router
+                address(1),         // Use address(1) as placeholder for feeCollector
                 0
             )
         );
@@ -63,6 +64,7 @@ contract VaultFactory is Ownable {
             name,
             symbol,
             strategy,
+            router,  // Pass the router address
             feeCollector,
             perfFeeBps
         );
@@ -75,12 +77,6 @@ contract VaultFactory is Ownable {
         emit VaultDeployed(asset, market, vault, strategy, name, symbol);
     }
 
-    function setRouter(address _router) external onlyOwner {
-        require(_router != address(0), "VaultFactory: Invalid router");
-        router = _router;
-        emit RouterUpdated(_router);
-    }
-    
     function computeVaultAddress(address asset, bytes32 market) external view returns (address) {
         bytes32 salt = keccak256(abi.encodePacked(asset, market));
         return vaultImplementation.predictDeterministicAddress(salt, address(this));
