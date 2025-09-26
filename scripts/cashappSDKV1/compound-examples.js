@@ -180,6 +180,113 @@ async function example5_claimRewards() {
     }
 }
 
+// ========== EXAMPLE 6: GET COMPLETE TVL ==========
+async function example6_getTVL() {
+    console.log('\n=== Example 6: Get Complete Total Value Locked (TVL) ===');
+    console.log('📖 API Usage: getTVL(chainName, cometAddress)');
+    console.log('├─ chainName: "ethereum" | "base" | null (current)');
+    console.log('├─ cometAddress: Comet contract address | null (use default)');
+    console.log('└─ Returns: {totalTVL, baseTVL, collateralTVL, assets, chain, cometAddress}');
+    console.log('🎯 Calculates complete TVL like official Compound example (base + collateral)');
+
+    const sdk = new CompoundSDK(config);
+
+    try {
+        console.log('\n📊 Getting complete TVL for Comet markets...');
+
+        // Example 1: Default (current chain, default comet)
+        console.log('\n1️⃣ await sdk.getTVL() // Default: current chain default comet');
+        const defaultTVL = await sdk.getTVL();
+        console.log('✅ Complete TVL Result:');
+        console.log(`├─ Chain: ${defaultTVL.chain}`);
+        console.log(`├─ Comet: ${defaultTVL.cometAddress}`);
+        console.log(`├─ Base TVL: $${defaultTVL.baseTVL.toLocaleString()}`);
+        console.log(`├─ Collateral TVL: $${defaultTVL.collateralTVL.toLocaleString()}`);
+        console.log(`├─ Total TVL: $${defaultTVL.totalTVL.toLocaleString()}`);
+        console.log(`└─ Assets Count: ${defaultTVL.assets.length}`);
+
+        // Example 2: Specific chain (Base)
+        console.log('\n2️⃣ await sdk.getTVL("base") // Base chain default comet');
+        const baseTVL = await sdk.getTVL('base');
+        console.log('✅ Base Chain Complete TVL:');
+        console.log(`├─ Total TVL: $${baseTVL.totalTVL.toLocaleString()}`);
+        console.log(`├─ Base (USDC): $${baseTVL.baseTVL.toLocaleString()}`);
+        console.log(`├─ Collateral: $${baseTVL.collateralTVL.toLocaleString()}`);
+        console.log('└─ Asset Breakdown:');
+        baseTVL.assets.forEach((asset, index) => {
+            const prefix = index === baseTVL.assets.length - 1 ? '   └─' : '   ├─';
+            console.log(`${prefix} ${asset.asset}: $${asset.tvl.toLocaleString()}`);
+        });
+
+        // Example 3: Ethereum (might have higher TVL)
+        console.log('\n3️⃣ await sdk.getTVL("ethereum") // Ethereum mainnet');
+        try {
+            const ethTVL = await sdk.getTVL('ethereum');
+            console.log('✅ Ethereum Complete TVL:');
+            console.log(`├─ Total TVL: $${ethTVL.totalTVL.toLocaleString()}`);
+            console.log(`├─ Base (USDC): $${ethTVL.baseTVL.toLocaleString()}`);
+            console.log(`├─ Collateral: $${ethTVL.collateralTVL.toLocaleString()}`);
+            console.log(`└─ Assets: ${ethTVL.assets.length} total`);
+        } catch (error) {
+            console.log('❌ Error:', error.message);
+        }
+
+        // Example 4: Specific comet address
+        console.log('\n4️⃣ await sdk.getTVL("base", "0xb125E6687d4313864e53df431d5425969c15Eb2F")');
+        try {
+            const specificComet = await sdk.getTVL('base', '0xb125E6687d4313864e53df431d5425969c15Eb2F');
+            console.log('✅ Specific Comet TVL:');
+            console.log(`├─ Comet: ${specificComet.cometAddress}`);
+            console.log(`└─ Total TVL: $${specificComet.totalTVL.toLocaleString()}`);
+        } catch (error) {
+            console.log('❌ Error:', error.message);
+        }
+
+        // Frontend Integration Examples
+        console.log('\n📱 Frontend Integration Examples:');
+        console.log(`
+// Dashboard - Multiple Chain TVLs
+const tvlData = await Promise.all([
+    sdk.getTVL('base'),      // Base chain complete TVL
+    sdk.getTVL('ethereum')   // Ethereum chain complete TVL
+]);
+
+const totalProtocolTVL = tvlData.reduce((sum, tvl) => sum + tvl.totalTVL, 0);
+
+// Chart Data for Asset Breakdown
+const allAssets = tvlData.flatMap(tvl =>
+    tvl.assets.map(asset => ({
+        name: \`\${tvl.chain} \${asset.asset}\`,
+        value: asset.tvl,
+        chain: tvl.chain
+    }))
+);
+
+// Compare Base vs Collateral across chains
+const tvlComparison = tvlData.map(tvl => ({
+    chain: tvl.chain,
+    baseTVL: tvl.baseTVL,
+    collateralTVL: tvl.collateralTVL,
+    totalTVL: tvl.totalTVL,
+    breakdown: tvl.assets
+}));
+
+// Specific Comet Selection
+const cometAddresses = {
+    'base-usdc': '0xb125E6687d4313864e53df431d5425969c15Eb2F',
+    'eth-usdc': '0xc3d688B66703497DAA19211EEdff47f25384cdc3'
+};
+const selectedTVL = await sdk.getTVL('base', cometAddresses['base-usdc']);
+        `);
+
+        console.log(`\n🕐 Complete TVL query completed at: ${new Date().toLocaleString()}`);
+        return defaultTVL;
+
+    } catch (error) {
+        console.error('❌ Complete TVL retrieval failed:', error.message);
+    }
+}
+
 // ========== CASHAPP INTEGRATION EXAMPLE ==========
 function cashAppIntegrationExample() {
     console.log('\n=== CashApp Integration Example ===');
@@ -283,14 +390,15 @@ async function claimEarnedRewards() {
 function showMenu() {
     console.log('\n🏦 Compound SDK Interactive Examples');
     console.log('='.repeat(50));
-    console.log('选择要执行的示例:');
-    console.log('1️⃣  查看 APR 信息');
-    console.log('2️⃣  查看用户余额');
-    console.log('3️⃣  供应 USDC 到 Compound');
-    console.log('4️⃣  从 Compound 提取 USDC');
-    console.log('5️⃣  领取 COMP 奖励');
-    console.log('6️⃣  显示 CashApp 集成代码');
-    console.log('0️⃣  退出');
+    console.log('Choose an example to run:');
+    console.log('1️⃣  View APR Information');
+    console.log('2️⃣  View User Balance');
+    console.log('3️⃣  Supply USDC to Compound');
+    console.log('4️⃣  Withdraw USDC from Compound');
+    console.log('5️⃣  Claim COMP Rewards');
+    console.log('6️⃣  Get Total Value Locked (TVL)');
+    console.log('7️⃣  Show CashApp Integration Code');
+    console.log('0️⃣  Exit');
     console.log('='.repeat(50));
 }
 
@@ -313,17 +421,20 @@ async function handleChoice(choice) {
                 await example5_claimRewards();
                 break;
             case '6':
+                await example6_getTVL();
+                break;
+            case '7':
                 cashAppIntegrationExample();
                 break;
             case '0':
-                console.log('👋 再见！');
+                console.log('👋 Goodbye!');
                 process.exit(0);
                 break;
             default:
-                console.log('❌ 无效选择，请输入 0-6');
+                console.log('❌ Invalid choice, please enter 0-7');
         }
     } catch (error) {
-        console.error('💥 示例执行失败:', error.message);
+        console.error('💥 Example execution failed:', error.message);
     }
 }
 
@@ -333,8 +444,9 @@ async function main() {
 
     if (!choice) {
         showMenu();
-        console.log('\n使用方法: node compound-examples.js [选项]');
-        console.log('例如: node compound-examples.js 1');
+        console.log('\nUsage: node compound-examples.js [option]');
+        console.log('Example: node compound-examples.js 6  # Get TVL');
+        console.log('         node compound-examples.js 1  # View APR');
         return;
     }
 
@@ -347,7 +459,8 @@ module.exports = {
     example2_getBalance,
     example3_supply,
     example4_withdraw,
-    example5_claimRewards
+    example5_claimRewards,
+    example6_getTVL
 };
 
 // Run if called directly
