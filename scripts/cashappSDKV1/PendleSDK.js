@@ -473,11 +473,71 @@ class PendleSDK {
     }
 }
 
+// ========== COMPOUND INTEGRATION ==========
+const { CompoundSDK } = require('./CompoundSDK');
+
+/**
+ * Unified SDK - Combines Pendle and Compound functionality
+ * Linus: "The right way to do this is to make both subsystems look the same"
+ */
+class UnifiedSDK extends PendleSDK {
+    constructor(config = {}) {
+        super(config);
+
+        // Initialize Compound SDK - let it fail if not supported
+        this.compound = new CompoundSDK(config);
+        this._log(`Compound integration initialized for chain ${config.chainId}`);
+    }
+
+    /**
+     * Get comprehensive yield opportunities
+     * Returns: { pendle: SwapQuote, compound: CompoundAPR }
+     */
+    async getYieldComparison(tokenAddress, amount, ptToken, market) {
+        const results = {
+            pendle: null,
+            compound: null,
+            bestYield: null
+        };
+
+        try {
+            // Get Pendle quote
+            results.pendle = await this.getQuote(tokenAddress, ptToken, amount, market);
+
+            // Get Compound APR - let it fail if not available
+            if (tokenAddress.toLowerCase() === this.chain.usdc?.toLowerCase()) {
+                results.compound = await this.compound.getTotalAPR('USDC');
+            }
+
+            // Determine best yield
+            if (results.pendle && results.compound) {
+                const pendleAPY = results.pendle.apyPercentage || 0;
+                const compoundAPY = results.compound.totalAPRPercentage || 0;
+                results.bestYield = pendleAPY > compoundAPY ? 'pendle' : 'compound';
+            } else if (results.pendle) {
+                results.bestYield = 'pendle';
+            } else if (results.compound) {
+                results.bestYield = 'compound';
+            }
+
+            return results;
+
+        } catch (error) {
+            throw new Error(`Yield comparison failed: ${error.message}`);
+        }
+    }
+}
+
 // ========== EXPORTS ==========
 module.exports = {
     PendleSDK,
+    UnifiedSDK,
     SwapQuote,
     TxResult,
     CHAINS,
-    PENDLE_ROUTER
+    PENDLE_ROUTER,
+    // Re-export Compound classes
+    CompoundSDK: require('./CompoundSDK').CompoundSDK,
+    CompoundAPR: require('./CompoundSDK').CompoundAPR,
+    CompoundBalance: require('./CompoundSDK').CompoundBalance
 };

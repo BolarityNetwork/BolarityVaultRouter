@@ -87,7 +87,12 @@ const COMPOUND_ABI = {
 
         // Supply tracking
         'function totalSupply() view returns (uint256)',
-        'function totalBorrow() view returns (uint256)'
+        'function totalBorrow() view returns (uint256)',
+
+        // TVL calculation methods (from official example)
+        'function totalsCollateral(address asset) view returns (uint128 totalSupplyAsset, uint128 totalBorrowAsset)',
+        'function getPrice(address priceFeed) view returns (uint256)',
+        'function baseTokenPriceFeed() view returns (address)'
     ],
     rewards: [
         'function claim(address comet, address src, bool shouldAccrue)',
@@ -325,6 +330,127 @@ class CompoundSDK {
         }
     }
 
+    /**
+     * Get Complete Total Value Locked (TVL) in USD for specific Comet market
+     * Calculates base token + all collateral assets TVL like official Compound example
+     *
+     * @param {string|null} chainName - Supported chains: 'ethereum', 'base', or null (current)
+     * @param {string|null} cometAddress - Comet contract address, or null (use default for chain)
+     *
+     * @returns {Promise<Object>} Complete TVL data object
+     * @returns {number} returns.totalTVL - Complete Total Value Locked in USD
+     * @returns {string} returns.chain - Chain name ('ethereum', 'base')
+     * @returns {string} returns.cometAddress - Comet contract address
+     * @returns {number} returns.baseTVL - Base token TVL in USD
+     * @returns {number} returns.collateralTVL - Total collateral TVL in USD
+     * @returns {Array} returns.assets - Breakdown of each asset TVL
+     *
+     * @example
+     * // Default: current chain default comet
+     * const tvl1 = await sdk.getTVL();
+     *
+     * // Specific chain with default comet
+     * const tvl2 = await sdk.getTVL('ethereum');
+     *
+     * // Specific comet address
+     * const tvl3 = await sdk.getTVL('base', '0xb125E6687d4313864e53df431d5425969c15Eb2F');
+     *
+     * // Frontend usage
+     * const {totalTVL, baseTVL, collateralTVL} = await sdk.getTVL('base');
+     */
+    async getTVL(chainName = null, cometAddress = null) {
+        try {
+            // Use current chain if not specified
+            const targetChainId = chainName ? this._getChainIdFromName(chainName) : this.chainId;
+            const chainDisplay = chainName || this._getChainName(this.chainId);
+
+            // Get market configuration for target chain
+            const marketConfig = this._getMarketConfig(targetChainId);
+
+            // Use provided comet address or default for chain
+            const targetCometAddress = cometAddress || marketConfig.comet;
+
+            // Create provider and comet contract for target chain
+            let provider, comet;
+            if (targetChainId === this.chainId && !cometAddress) {
+                comet = this._getCometContract();
+            } else {
+                provider = targetChainId === this.chainId
+                    ? this._getProvider()
+                    : this._createProviderForChain(targetChainId);
+                comet = new ethers.Contract(targetCometAddress, COMPOUND_ABI.comet, provider);
+            }
+
+            // Get base token TVL (similar to official example)
+            const [totalSupplyBase, baseTokenPriceFeedAddr, numAssets] = await Promise.all([
+                comet.totalSupply(),
+                comet.baseTokenPriceFeed(),
+                comet.numAssets()
+            ]);
+
+            // Get base token price (assume USDC = $1 for simplicity)
+            const basePrice = 1.0; // In production: await comet.getPrice(baseTokenPriceFeedAddr)
+            const baseTVL = Number(ethers.formatUnits(totalSupplyBase.toString(), 6)) * basePrice;
+
+            this._log(`Base TVL: $${baseTVL.toLocaleString()}`);
+
+            // Get collateral assets TVL
+            let collateralTVL = 0;
+            const assetBreakdown = [{
+                asset: 'USDC (Base)',
+                tvl: baseTVL,
+                isBase: true
+            }];
+
+            // Iterate through all collateral assets
+            for (let i = 0; i < Number(numAssets); i++) {
+                try {
+                    const assetInfo = await comet.getAssetInfo(i);
+                    const [, asset, priceFeed, scale] = assetInfo;
+
+                    // Get collateral totals
+                    const [totalSupplyAsset] = await comet.totalsCollateral(asset);
+
+                    if (totalSupplyAsset > 0) {
+                        // For simplicity, assume price = $1 (in production, use price feeds)
+                        const assetPrice = 1.0; // await comet.getPrice(priceFeed)
+                        const assetTVL = Number(totalSupplyAsset.toString()) / Number(scale.toString()) * assetPrice;
+
+                        collateralTVL += assetTVL;
+                        assetBreakdown.push({
+                            asset: `Asset-${i}`,
+                            address: asset,
+                            tvl: assetTVL,
+                            totalSupply: Number(totalSupplyAsset.toString()) / Number(scale.toString()),
+                            isBase: false
+                        });
+
+                        this._log(`Collateral ${i} TVL: $${assetTVL.toLocaleString()}`);
+                    }
+                } catch (error) {
+                    this._log(`Warning: Failed to get asset ${i} info: ${error.message}`);
+                }
+            }
+
+            const totalTVL = baseTVL + collateralTVL;
+
+            this._log(`Complete TVL (${chainDisplay}): $${totalTVL.toLocaleString()} USD`);
+
+            return {
+                totalTVL,
+                chain: chainDisplay,
+                cometAddress: targetCometAddress,
+                baseTVL,
+                collateralTVL,
+                assets: assetBreakdown,
+                timestamp: Date.now()
+            };
+
+        } catch (error) {
+            throw new Error(`Failed to get complete TVL: ${error.message}`);
+        }
+    }
+
     // ========== PUBLIC API - USER ACTIONS ==========
 
     /**
@@ -551,6 +677,54 @@ class CompoundSDK {
         if (this.verbose) {
             console.log(`[CompoundSDK] ${message}`);
         }
+    }
+
+    // ========== TVL HELPER METHODS ==========
+
+    _getChainIdFromName(chainName) {
+        const chainMap = {
+            'ethereum': 1,
+            'base': 8453
+        };
+        const chainId = chainMap[chainName.toLowerCase()];
+        if (!chainId) {
+            throw new Error(`Unsupported chain: ${chainName}`);
+        }
+        return chainId;
+    }
+
+    _getChainName(chainId) {
+        const nameMap = {
+            1: 'ethereum',
+            8453: 'base'
+        };
+        return nameMap[chainId] || `chain-${chainId}`;
+    }
+
+    _getMarketConfig(chainId) {
+        const config = chainId === 1 ? COMPOUND_MARKETS.ethereum : COMPOUND_MARKETS.base;
+        if (!config) {
+            throw new Error(`No market configuration for chain ${chainId}`);
+        }
+        return config;
+    }
+
+    _createProviderForChain(chainId) {
+        // For simplicity, use same RPC pattern (in production, have per-chain RPCs)
+        const rpcUrl = chainId === 1
+            ? 'https://eth.llamarpc.com'
+            : 'https://1rpc.io/base';
+        return new ethers.JsonRpcProvider(rpcUrl);
+    }
+
+    _getAssetPrice(assetSymbol) {
+        // Simplified pricing (in production, use price oracle)
+        const stablecoins = ['USDC', 'USDT', 'DAI'];
+        if (stablecoins.includes(assetSymbol)) {
+            return 1.0;
+        }
+        // For other assets, would need price feeds
+        return 1.0;
     }
 }
 

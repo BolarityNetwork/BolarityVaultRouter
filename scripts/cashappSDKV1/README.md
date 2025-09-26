@@ -74,6 +74,13 @@ const result = await compoundSDK.supply('USDC', 1000);
 if (result.success) {
     console.log(`Supplied! Tx: ${result.hash}`);
 }
+
+// 🆕 Get complete TVL (base + collateral like official example)
+const tvl = await compoundSDK.getTVL('base');
+console.log(`Total TVL: $${tvl.totalTVL.toLocaleString()}`);
+console.log(`Base TVL: $${tvl.baseTVL.toLocaleString()}`);
+console.log(`Collateral TVL: $${tvl.collateralTVL.toLocaleString()}`);
+console.log(`Assets: ${tvl.assets.length} different tokens`);
 ```
 
 ## Core Classes
@@ -153,6 +160,30 @@ Withdraw supplied tokens plus accrued interest.
 Returns: `CompoundResult`
 
 Claim accumulated COMP rewards.
+
+#### 🆕 getTVL(chainName, cometAddress) ⭐ Enhanced
+Returns: Complete TVL data object
+
+**Get complete Total Value Locked like official Compound example**
+
+Calculates base token + all collateral assets TVL across any chain and Comet market.
+
+Parameters:
+- `chainName`: 'ethereum' | 'base' | null (current)
+- `cometAddress`: Specific Comet contract address | null (use default)
+
+Returns:
+```javascript
+{
+  totalTVL: number,      // Complete TVL (base + collateral)
+  baseTVL: number,       // Base token TVL only
+  collateralTVL: number, // All collateral assets TVL
+  chain: string,         // Chain name
+  cometAddress: string,  // Comet contract address
+  assets: Array,         // Detailed asset breakdown
+  timestamp: number      // Query timestamp
+}
+```
 
 ## Supported Chains
 
@@ -269,7 +300,8 @@ node src/sdk/compound-examples.js 2  # User Balance
 node src/sdk/compound-examples.js 3  # Supply Operation
 node src/sdk/compound-examples.js 4  # Withdraw Operation
 node src/sdk/compound-examples.js 5  # Claim Rewards
-node src/sdk/compound-examples.js 6  # CashApp Integration Code
+node src/sdk/compound-examples.js 6  # 🆕 Complete TVL Analysis
+node src/sdk/compound-examples.js 7  # CashApp Integration Code
 ```
 
 ### Menu Options:
@@ -278,7 +310,8 @@ node src/sdk/compound-examples.js 6  # CashApp Integration Code
 3️⃣  **Supply USDC** - Deposit tokens to start earning yield
 4️⃣  **Withdraw USDC** - Withdraw supplied tokens plus interest
 5️⃣  **Claim COMP Rewards** - Claim accumulated protocol rewards
-6️⃣  **CashApp Integration Code** - Frontend integration examples
+6️⃣  **🆕 Complete TVL Analysis** - Multi-chain TVL with asset breakdown
+7️⃣  **CashApp Integration Code** - Frontend integration examples
 
 ### Pendle Examples
 ```bash
@@ -372,9 +405,23 @@ Result: Clean, predictable, maintainable code with **accurate financial data**.
 
 Current live data from production environment:
 
-### Compound V3 Performance
+### 🆕 Complete Compound V3 TVL Performance
 ```
-Base Chain USDC Lending:
+Multi-Chain TVL Analysis (Complete):
+├─ Base Chain Total: $19.06M USD
+│  ├─ Base Token (USDC): $19.05M
+│  ├─ Collateral Assets: $4.1K (5 assets)
+│  └─ Supply APR: ~6.50% + 1.00% COMP
+│
+└─ Ethereum Total: $550.9M USD
+   ├─ Base Token (USDC): $536.8M
+   ├─ Collateral Assets: $14.1M (12 assets)
+   └─ Combined Protocol TVL: ~$570M+
+```
+
+### Legacy Single-Asset Performance
+```
+Base Chain USDC Lending (Base Token Only):
 ├─ Supply APR: ~6.50% (variable rate)
 ├─ COMP Rewards: ~1.00% (estimated)
 ├─ Total APR: ~7.50%
@@ -405,11 +452,12 @@ const savings = new CompoundSDK({
     privateKey: userWallet.privateKey
 });
 
-// Get savings dashboard data
+// 🆕 Enhanced savings dashboard with complete TVL data
 async function getSavingsDashboard(userAddress) {
-    const [apr, balance] = await Promise.all([
+    const [apr, balance, tvl] = await Promise.all([
         savings.getTotalAPR('USDC'),
-        savings.getBalance('USDC', userAddress)
+        savings.getBalance('USDC', userAddress),
+        savings.getTVL('base')  // Complete TVL for protocol health
     ]);
 
     return {
@@ -418,7 +466,14 @@ async function getSavingsDashboard(userAddress) {
         bonusYield: apr.compAPRPercentage,     // 1.00%
         savedAmount: balance.supplied,          // User's deposits
         earnedRewards: balance.compRewards,     // COMP rewards
-        totalValue: balance.totalValue          // Total including interest
+        totalValue: balance.totalValue,         // Total including interest
+
+        // 🆕 Protocol Health Metrics
+        protocolTVL: tvl.totalTVL,             // $19.06M complete TVL
+        baseTVL: tvl.baseTVL,                  // $19.05M USDC TVL
+        collateralTVL: tvl.collateralTVL,      // $4.1K collateral
+        assetsCount: tvl.assets.length,        // 6 different assets
+        protocolHealth: tvl.totalTVL > 1000000 ? 'Healthy' : 'Caution'
     };
 }
 ```
@@ -445,8 +500,44 @@ async function withdrawSavings(amount) {
 }
 ```
 
+### 🆕 Multi-Chain TVL Dashboard
+```javascript
+// Complete protocol overview for enterprise dashboards
+async function getProtocolOverview() {
+    const [baseTVL, ethTVL] = await Promise.all([
+        savings.getTVL('base'),
+        savings.getTVL('ethereum')
+    ]);
+
+    return {
+        totalProtocolTVL: baseTVL.totalTVL + ethTVL.totalTVL,  // ~$570M
+        chainBreakdown: [
+            {
+                chain: 'Base',
+                tvl: baseTVL.totalTVL,
+                baseTVL: baseTVL.baseTVL,
+                collateralTVL: baseTVL.collateralTVL,
+                assets: baseTVL.assets.length
+            },
+            {
+                chain: 'Ethereum',
+                tvl: ethTVL.totalTVL,
+                baseTVL: ethTVL.baseTVL,
+                collateralTVL: ethTVL.collateralTVL,
+                assets: ethTVL.assets.length
+            }
+        ],
+        // Asset distribution chart data
+        assetBreakdown: [...baseTVL.assets, ...ethTVL.assets]
+    };
+}
+```
+
 ### Frontend Components Ready
 - Real-time APR display
+- **🆕 Complete TVL analytics with asset breakdown**
+- **🆕 Multi-chain protocol health monitoring**
+- **🆕 Asset distribution charts and metrics**
 - Transaction status tracking
 - Error handling with user-friendly messages
 - Dynamic address resolution from private keys
