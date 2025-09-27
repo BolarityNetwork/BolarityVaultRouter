@@ -727,9 +727,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     function whitelistStrategy(address strategy_, bool whitelist) external onlyOwner {
         require(strategy_ != address(0), "BolarityVault: Invalid strategy");
         
-        // Verify it's a contract and not an EOA or EIP-7702 account
+        // Verify it's a contract and not an EOA
         require(_isContract(strategy_), "BolarityVault: Strategy must be a contract");
-        require(!_isEIP7702Account(strategy_), "BolarityVault: EIP-7702 accounts not allowed");
         
         whitelistedStrategies[strategy_] = whitelist;
         emit StrategyWhitelisted(strategy_, whitelist);
@@ -740,7 +739,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         require(newStrategy != address(0), "BolarityVault: Invalid strategy");
         require(whitelistedStrategies[newStrategy], "BolarityVault: Strategy not whitelisted");
         require(_isContract(newStrategy), "BolarityVault: Strategy must be a contract");
-        require(!_isEIP7702Account(newStrategy), "BolarityVault: EIP-7702 accounts not allowed");
         require(!paused(), "BolarityVault: Paused");
         
         // Crystallize fees before strategy change
@@ -807,25 +805,6 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         return size > 0;
     }
     
-    // Helper function to detect EIP-7702 delegated accounts
-    function _isEIP7702Account(address account) internal view returns (bool) {
-        // Check if the account has the EIP-7702 delegation prefix (0xef0100)
-        bytes memory code;
-        assembly {
-            let size := extcodesize(account)
-            if gt(size, 2) {
-                code := mload(0x40)
-                mstore(0x40, add(code, size))
-                extcodecopy(account, code, 0, 3)
-            }
-        }
-        
-        if (code.length >= 3) {
-            // Check for EIP-7702 prefix: 0xef0100
-            return code[0] == 0xef && code[1] == 0x01 && code[2] == 0x00;
-        }
-        return false;
-    }
 
     function emergencyWithdraw() external onlyOwner {
         require(strategy != address(0), "BolarityVault: No strategy set");
