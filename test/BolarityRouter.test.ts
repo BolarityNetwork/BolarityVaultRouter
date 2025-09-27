@@ -44,8 +44,7 @@ describe("BolarityRouter", function () {
     // Deploy BolarityRouter first (needs to be deployed before factory)
     const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
     router = await BolarityRouter.deploy(
-      await registry.getAddress(),
-      "0x0000000000000000000000000000000000000001" // Placeholder for factory (address(1))
+      await registry.getAddress()
     );
     await router.waitForDeployment();
 
@@ -125,12 +124,6 @@ describe("BolarityRouter", function () {
       expect(await router.registry()).to.equal(await registry.getAddress());
     });
 
-    it("Should set the factory placeholder", async function () {
-      // Router is deployed with a placeholder factory address (address(1))
-      // This is because of circular dependency between Router and Factory
-      expect(await router.factory()).to.equal("0x0000000000000000000000000000000000000001");
-    });
-
     it("Should set the correct owner", async function () {
       expect(await router.owner()).to.equal(owner.address);
     });
@@ -138,15 +131,8 @@ describe("BolarityRouter", function () {
     it("Should revert with zero registry address", async function () {
       const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
       await expect(
-        BolarityRouter.deploy(ethers.ZeroAddress, await factory.getAddress())
+        BolarityRouter.deploy(ethers.ZeroAddress)
       ).to.be.revertedWith("BolarityRouter: Invalid registry");
-    });
-
-    it("Should revert with zero factory address", async function () {
-      const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
-      await expect(
-        BolarityRouter.deploy(await registry.getAddress(), ethers.ZeroAddress)
-      ).to.be.revertedWith("BolarityRouter: Invalid factory");
     });
   });
 

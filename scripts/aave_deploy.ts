@@ -1,10 +1,10 @@
 
 import { ethers } from "hardhat";
 
-const REGISTER            = "0xFD9880ce68F9f5BE5BC4F8E2eeeE050b5778A27F";
-const VAULT_FACTORY       = "0xFab6FeA54C1f80e82286A22983F9A4CCcDe0C081";
-const BOLARITY_ROUTER     = "0xF83C58720ABC8a8fEA85F9CeeA4c6196C5721402";
-const AAVE_STRATEGY       = "0xE0b98551620Cd4637929f516d98d89E23e83021C";
+const REGISTER            = "0x3a254517F65fc839421FE3d9a018f0b9fa184A70";
+const VAULT_FACTORY       = "0x7BE4a3516bC9e15854A21156D65d864FaAa97e35";
+const BOLARITY_ROUTER     = "0x80C89E0c038f03f7A65A3B1E68fEBaA648075749";
+const AAVE_STRATEGY       = "0x7f07aDBc6e3eEF79E0952b5c1bF22E571B211c10";
 
 const UNDERLYING_ASSET    = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // usdc
 const AAVE_POOL           = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5";
@@ -25,7 +25,7 @@ async function deploy() {
   console.log(`Registry deployed to ${Registry.target}`);
   
   // 2. Deploy BolarityRouter first (before VaultFactory)
-  const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, ethers.ZeroAddress]); // Use placeholder for factory
+  const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target]);
   await BolarityRouter.waitForDeployment();
   console.log(`BolarityRouter deployed to ${BolarityRouter.target}`);
   
@@ -56,7 +56,7 @@ async function deploy() {
 
   // Create vault using the strategy
   tx = await VaultFactory.createVault(
-    UNDERLYING_ASSET, // Link address
+    UNDERLYING_ASSET,
     market,
     AaveStrategy.target,
     process.env.FEE_COLLECTOR!, // fee collector
@@ -124,7 +124,6 @@ async function withdraw(amout:bigint, reciver:string) {
     console.log("Approval granted for withdraw");
   }
 
-  console.log("Approve success");
   await BolarityRouterContract.withdraw(
     UNDERLYING_ASSET,
     market,
@@ -136,6 +135,56 @@ async function withdraw(amout:bigint, reciver:string) {
   console.log("Withdraw underlying asset");
 }
 
+async function mint(shares:bigint, reciver:string) {
+  const asset = await BolarityRouterContract.previewMint(UNDERLYING_ASSET, market, shares);
+  // Check current allowance
+  const currentAllowance = await MockERC20Contract.allowance(reciver, BOLARITY_ROUTER);
+  
+  // Only approve if current allowance is insufficient
+  if (currentAllowance < asset) {
+    let approveTx = await MockERC20Contract.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+    await approveTx.wait();
+    console.log("Approval granted for mint");
+  }
+
+  await BolarityRouterContract.mint(
+    UNDERLYING_ASSET,
+    market,
+    shares,
+    reciver,
+    '0x',
+  );
+  console.log("Mint shares");
+}
+
+async function redeem(shares:bigint, reciver:string) {
+  const vault = await BolarityRouterContract.vaultFor(
+  UNDERLYING_ASSET,
+  market);
+  const BolarityVault_factory = await ethers.getContractFactory("BolarityVault");
+  const BolarityVaultContract = await BolarityVault_factory.attach(vault);
+
+  const currentAllowance = await BolarityVaultContract.allowance(reciver, BOLARITY_ROUTER);
+  const asset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, shares);
+
+  // Only approve if current allowance is insufficient
+  if (currentAllowance < asset) {
+    let approveTx = await BolarityVaultContract.approve(BOLARITY_ROUTER, ethers.MaxUint256);
+    await approveTx.wait();
+    console.log("Approval granted for redeem");
+  }
+
+  await BolarityRouterContract.redeem(
+    UNDERLYING_ASSET,
+    market,
+    shares,
+    reciver,
+    reciver,
+    '0x',
+  );
+  console.log("Reddem underlying asset");
+}
+
 async function main() {
 
   // await deploy();
@@ -144,36 +193,24 @@ async function main() {
 
   const signer = await ethers.provider.getSigner();
 
-  // =====================================deposit===============================================
-  const amout = 100000n; // 0.1 USDT
-  await deposit(amout, signer.address);
+  // // =====================================deposit===============================================
+  const depositAmout = 100000n; // 0.1 USDC
+  await deposit(depositAmout, signer.address);
 
   // =====================================withdraw===============================================
-  // await withdraw(ethers.MaxUint256, signer.address)
+  const userShares = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
+  const userAsset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, userShares);
+  await withdraw(userAsset, signer.address)// or ethers.MaxUint256
 
 
 
   // =====================================mint===============================================
-  // const shares = ethers.parseEther('1');
-  // await BolarityRouter.mint(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   shares,
-  //   signer.address,
-  //   '0x',
-  // );
-  // console.log("Mint shares from link vault");
+  const mintShares = 100000n;
+  await mint(mintShares, signer.address)
 
   // =====================================redeem===============================================
-  // await BolarityRouter.redeem(
-  //   UNDERLYING_ASSET, // Link address
-  //   market,
-  //   ethers.MaxUint256,
-  //   signer.address,
-  //   signer.address,
-  //   '0x',
-  // );
-  // console.log("Reddem assets from link vault");
+  const shares = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
+  await redeem(shares, signer.address)
 }
 
 // We recommend this pattern to be able to use async/await everywhere

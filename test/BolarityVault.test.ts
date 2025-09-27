@@ -48,8 +48,7 @@ describe("BolarityVault", function () {
     // Deploy BolarityRouter first
     const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
     router = await BolarityRouter.deploy(
-      await registry.getAddress(),
-      "0x0000000000000000000000000000000000000001" // Placeholder for factory
+      await registry.getAddress()
     );
     await router.waitForDeployment();
 

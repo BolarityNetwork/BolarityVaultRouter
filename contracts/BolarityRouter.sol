@@ -8,14 +8,12 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IRegistry.sol";
 import "./interfaces/IBolarityVault.sol";
-import "./interfaces/IVaultFactory.sol";
 import "./interfaces/IBolarityRouter.sol";
 
 contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
 
     IRegistry public immutable registry;
-    IVaultFactory public immutable factory;
 
     event Deposited(
         address indexed asset,
@@ -47,11 +45,9 @@ contract BolarityRouter is IBolarityRouter, ReentrancyGuard, Pausable, Ownable {
         uint256 amount
     );
 
-    constructor(address _registry, address _factory) Ownable(msg.sender) {
+    constructor(address _registry) Ownable(msg.sender) {
         require(_registry != address(0), "BolarityRouter: Invalid registry");
-        require(_factory != address(0), "BolarityRouter: Invalid factory");
         registry = IRegistry(_registry);
-        factory = IVaultFactory(_factory);
     }
 
     // -------- Write (with data) --------

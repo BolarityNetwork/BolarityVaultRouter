@@ -58,7 +58,7 @@ async function main() {
   // console.log(`VaultFactory deployed to ${VaultFactory.target}`);
   
   // // 3. Deploy BolarityRouter
-  // const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target, VaultFactory.target]);
+  // const BolarityRouter = await ethers.deployContract("BolarityRouter", [Registry.target]);
   // await BolarityRouter.waitForDeployment();
   // console.log(`BolarityRouter deployed to ${BolarityRouter.target}`);
   

@@ -72,8 +72,7 @@ describe("AaveStrategy - Multiple Deposits Issue", function () {
     // Deploy BolarityRouter
     const BolarityRouter = await ethers.getContractFactory("BolarityRouter");
     router = await BolarityRouter.deploy(
-      registry.target,
-      "0x0000000000000000000000000000000000000001" // Placeholder for factory
+      registry.target
     );
     await router.waitForDeployment();
 
