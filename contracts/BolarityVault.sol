@@ -806,36 +806,10 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
     }
     
 
-    function emergencyWithdraw() external onlyOwner {
+    function emergencyWithdraw(uint256 amount, bytes calldata strategyData) external override onlyOwner {
         require(strategy != address(0), "BolarityVault: No strategy set");
         
         // Get total invested amount
-        (bool success, bytes memory data) = strategy.staticcall(
-            abi.encodeWithSignature("totalUnderlying(address)", address(this))
-        );
-        
-        if (success && data.length >= 32) {
-            uint256 invested = abi.decode(data, (uint256));
-            
-            if (invested > 0) {
-                // Emergency withdraw via delegatecall using divestDelegate
-                bytes memory emptyData;
-                (bool emergencySuccess, ) = strategy.delegatecall(
-                    abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), invested, emptyData)
-                );
-                
-                if (emergencySuccess) {
-                    emit Divested(strategy, invested);
-                }
-            }
-        }
-    }
-
-    function emergencyWithdraw(uint256 amount) external override onlyOwner {
-        require(strategy != address(0), "BolarityVault: No strategy set");
-        require(amount > 0, "BolarityVault: Zero amount");
-        
-        // Verify amount doesn't exceed invested amount
         (bool success, bytes memory data) = strategy.staticcall(
             abi.encodeWithSignature("totalUnderlying(address)", address(this))
         );
@@ -845,13 +819,19 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             invested = abi.decode(data, (uint256));
         }
         
-        uint256 toWithdraw = amount > invested ? invested : amount;
+        // If amount is 0 or type(uint256).max, withdraw all
+        uint256 toWithdraw;
+        if (amount == 0 || amount == type(uint256).max) {
+            toWithdraw = invested;
+        } else {
+            require(amount > 0, "BolarityVault: Invalid amount");
+            toWithdraw = amount > invested ? invested : amount;
+        }
         
         if (toWithdraw > 0) {
-            // Emergency withdraw specific amount via delegatecall using divestDelegate
-            bytes memory emptyData;
+            // Emergency withdraw via delegatecall using divestDelegate with provided calldata
             (bool emergencySuccess, ) = strategy.delegatecall(
-                abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, emptyData)
+                abi.encodeWithSignature("divestDelegate(address,uint256,bytes)", asset(), toWithdraw, strategyData)
             );
             
             if (emergencySuccess) {

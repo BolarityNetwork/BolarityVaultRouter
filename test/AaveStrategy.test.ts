@@ -250,7 +250,7 @@ describe("AaveStrategy", function () {
       );
 
       // Emergency withdraw with specific amount
-      await vault["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT);
+      await vault.emergencyWithdraw(DEPOSIT_AMOUNT, "0x");
 
       // Check vault received funds back
       const vaultBalance = await mockToken.balanceOf(vault.target);

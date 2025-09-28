@@ -26,7 +26,7 @@ interface IBolarityVault is IERC4626 {
     function setRouter(address newRouter) external;
     function pause() external;
     function unpause() external;
-    function emergencyWithdraw(uint256 amount) external;
+    function emergencyWithdraw(uint256 amount, bytes calldata strategyData) external;
     function perfFeeBps() external view returns (uint16);
     function feeCollector() external view returns (address);
     function strategy() external view returns (address);

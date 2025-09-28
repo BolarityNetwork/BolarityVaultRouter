@@ -211,12 +211,12 @@ describe("BolarityVault Security Tests", function () {
 
       // Only owner should be able to call emergency withdraw
       await expect(
-        (vault.connect(attacker) as any)["emergencyWithdraw()"]()
+        vault.connect(attacker).emergencyWithdraw(0, "0x")
       ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
 
-      // Owner should be able to call emergency withdraw
+      // Owner should be able to call emergency withdraw  
       await expect(
-        (vault.connect(owner) as any)["emergencyWithdraw()"]()
+        vault.connect(owner).emergencyWithdraw(0, "0x")
       ).to.not.be.reverted;
     });
   });

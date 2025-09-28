@@ -606,14 +606,14 @@ describe("BolarityVault", function () {
       
       // Call emergency withdraw without arguments
       // Skip this test as it requires specific mock strategy setup for delegatecall
-      await vault["emergencyWithdraw()"]();
+      await vault.emergencyWithdraw(0, "0x");
       
       const treasuryAfter = await mockToken.balanceOf(owner.address);
       expect(treasuryAfter - treasuryBefore).to.equal(totalBalance);
     });
 
     it("Should only allow owner to emergency withdraw", async function () {
-      await expect(vault.connect(user1)["emergencyWithdraw()"](  ))
+      await expect(vault.connect(user1).emergencyWithdraw(0, "0x"))
         .to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
     });
   });

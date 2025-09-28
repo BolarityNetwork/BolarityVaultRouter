@@ -289,7 +289,7 @@ describe("CompoundStrategy", function () {
 
       // Emergency withdraw specific amount (only owner can do this)
       // Call with explicit signature
-      await vault.connect(owner)["emergencyWithdraw(uint256)"](DEPOSIT_AMOUNT / 2n);
+      await vault.connect(owner).emergencyWithdraw(DEPOSIT_AMOUNT / 2n, "0x");
 
       // Check that vault's Comet balance decreased
       const vaultCometBalanceAfter = await mockComet.balanceOf(vault.target);
@@ -302,7 +302,7 @@ describe("CompoundStrategy", function () {
 
       // Emergency withdraw all (only owner can do this)
       // Call with explicit signature
-      await vault.connect(owner)["emergencyWithdraw()"]();
+      await vault.connect(owner).emergencyWithdraw(0, "0x");
 
       // Check that all funds are withdrawn from Comet
       const vaultCometBalance = await mockComet.balanceOf(vault.target);
