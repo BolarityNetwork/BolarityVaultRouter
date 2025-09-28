@@ -6,10 +6,10 @@ const PendleRouter = require('../artifacts/contracts/interfaces/IPendle.sol/IPen
 const PendleOracle = require('../artifacts/contracts/interfaces/IPendle.sol/IPendleOracle.json')
 const PendleMarket = require('../artifacts/contracts/interfaces/IPendle.sol/IPendleMarket.json')
 
-const REGISTER            = "0x1F719A265861944b0A1F27FcD826B7265C8558D8";
-const VAULT_FACTORY       = "0x21bb1A256f6864693650A6Ce013A1395a073c40b";
-const BOLARITY_ROUTER     = "0x7d65Bf7beE901D89CcdB6472C1919A8437181493";
-const PENDLE_STRATEGY     = "0xb10d3608995c37ccAAf064E21561dE00468190fc";
+const REGISTER            = "0xD73d63eCdB1144fd15Ee01fD0DEF0CdF87466620";
+const VAULT_FACTORY       = "0x83777d4727A03EF66E54e814e19d0C44F2b07274";
+const BOLARITY_ROUTER     = "0x2553ee51c76F005925d9eb98936d2D2645284416";
+const PENDLE_STRATEGY     = "0x214E7E678A683bCb807292159fA8083D6431DF73";
 
 
 const UNDERLYING_ASSET    = "0xf3527ef8dE265eAa3716FB312c12847bFBA66Cef"; // USDX
@@ -228,48 +228,40 @@ async function swapPtToToken(amountsIn:string, receiver:string, slippageOverride
 }
 
 async function main() {
-  await deploy();
+  // await deploy();
 
-  // await attchContract();
+  await attchContract();
 
-  // const signer = await ethers.provider.getSigner();
-  // const vault = await BolarityRouterContract.vaultFor(
-  // UNDERLYING_ASSET,
-  // market);
+  const signer = await ethers.provider.getSigner();
+  const vault = await BolarityRouterContract.vaultFor(
+  UNDERLYING_ASSET,
+  market);
 
   // =====================================deposit===============================================
-  // const depositAmout = ethers.parseEther("0.1");
-  // const depositCalldata = await swapTokenToPt(depositAmout.toString(), vault);
-  // await deposit(depositAmout, signer.address, depositCalldata);
+  const depositAmout = ethers.parseEther("0.1");
+  const depositCalldata = await swapTokenToPt(depositAmout.toString(), vault);
+  await deposit(depositAmout, signer.address, depositCalldata);
 
   // =====================================withdraw===============================================
-  // const userShares = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
-  // const userAsset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, userShares);
-  // console.log(userShares, userAsset);
-  // // Apply slippage tolerance (99% of expected amount to account for swap slippage)
-  // const withdrawAmount = userAsset * 99n / 100n;
-  // console.log("Adjusted withdraw amount (with slippage):", withdrawAmount);
+  const userShares = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
+  const userAsset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, userShares);
 
-  // const withdrawCalldata = await swapPtToToken(userAsset.toString(), vault);
-  // await withdraw(withdrawAmount, signer.address, withdrawCalldata)// or ethers.MaxUint256
-
+  const withdrawCalldata = await swapPtToToken(userAsset.toString(), vault);
+  await withdraw(userAsset, signer.address, withdrawCalldata)// or ethers.MaxUint256
 
 
   // =====================================mint===============================================
-  // const mintShares = ethers.parseEther("0.05");
-  // const mintAsset = await BolarityRouterContract.previewMint(UNDERLYING_ASSET, market, mintShares);
-  // const mintCalldata = await swapTokenToPt(mintAsset.toString(), vault);
-  // await mint(mintShares, signer.address, mintCalldata)
+  const mintShares = ethers.parseEther("0.1");
+  const mintAsset = await BolarityRouterContract.previewMint(UNDERLYING_ASSET, market, mintShares);
+  const mintCalldata = await swapTokenToPt(mintAsset.toString(), vault);
+  await mint(mintShares, signer.address, mintCalldata)
 
   // =====================================redeem===============================================
-  // const userBalance = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
-  // const userAsset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, userBalance);
-  // const redeemAmount = userAsset * 90n / 100n;
-  // console.log("Adjusted withdraw amount (with slippage):", redeemAmount);
-  
-  // // Use higher slippage (3%) for the swap
-  // const redeemCalldata = await swapPtToToken(redeemAmount.toString(), vault);
-  // await redeem(userBalance, signer.address, redeemCalldata);
+  const userBalance = await BolarityRouterContract.getUserBalance(UNDERLYING_ASSET, market, signer.address);
+  const userRedeemAsset = await BolarityRouterContract.previewRedeem(UNDERLYING_ASSET, market, userBalance);
+
+  const redeemCalldata = await swapPtToToken(userRedeemAsset.toString(), vault);
+  await redeem(userBalance, signer.address, redeemCalldata);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

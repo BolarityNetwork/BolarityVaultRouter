@@ -424,13 +424,7 @@ contract PendlePTStrategy is IStrategy, Ownable {
         address market = config.market;
         address pt = config.pt;
         
-        if (market == address(0) || pt == address(0)) {
-            // Asset not configured, use conservative estimate
-            // Assume 3% average discount for PT (100 USDC -> 103 PT)
-            accounted = (amountIn * 103) / 100;
-            entryGain = accounted > amountIn ? accounted - amountIn : 0;
-            return (accounted, entryGain);
-        }
+        require(market != address(0) && pt != address(0), "PendlePTStrategy: Asset not configured");
         
         // Check if PT is expired
         if (IPendlePT(pt).isExpired()) {
@@ -438,33 +432,24 @@ contract PendlePTStrategy is IStrategy, Ownable {
             return (amountIn, 0);
         }
         
-        // Query oracle for current PT rate
-        try pendleOracle.getPtToAssetRate(market, TWAP_DURATION) returns (uint256 ptRate) {
-            if (ptRate > 0 && ptRate <= 1e18) {
-                // Calculate expected PT amount based on oracle rate
-                // If 1 PT = 0.9259 USDC, then 100 USDC buys 100/0.9259 = 108 PT
-                uint256 expectedPt = (amountIn * 1e18) / ptRate;
-                
-                // Account for potential slippage (use 99% of expected)
-                accounted = (expectedPt * 99) / 100;
-                
-                // Calculate entry gain
-                if (accounted > amountIn) {
-                    entryGain = accounted - amountIn;
-                } else {
-                    entryGain = 0;
-                }
-                
-                return (accounted, entryGain);
-            }
-        } catch {
-            // Oracle failed, use fallback
+        // Query oracle for current PT rate (TWAP-based, manipulation resistant)
+        uint256 ptRate = pendleOracle.getPtToAssetRate(market, TWAP_DURATION);
+        require(ptRate > 0 && ptRate <= 1e18, "PendlePTStrategy: Invalid PT rate from oracle");
+        
+        // Calculate expected PT amount based on oracle rate
+        // If 1 PT = 0.9259 USDC, then 100 USDC buys 100/0.9259 = 108 PT
+        uint256 expectedPt = (amountIn * 1e18) / ptRate;
+        
+        // Account for potential slippage (use 99% of expected)
+        accounted = (expectedPt * 99) / 100;
+        
+        // Calculate entry gain
+        if (accounted > amountIn) {
+            entryGain = accounted - amountIn;
+        } else {
+            entryGain = 0;
         }
         
-        // Fallback: conservative estimate
-        // Assume 3% average discount for PT (100 USDC -> 103 PT)
-        accounted = (amountIn * 103) / 100;
-        entryGain = accounted > amountIn ? accounted - amountIn : 0;
         return (accounted, entryGain);
     }
 }

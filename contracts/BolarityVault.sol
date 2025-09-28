@@ -421,18 +421,14 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Execute withdrawal from strategy if needed
         _executeWithdraw(assets, strategyData);
         
-        // Check balance after withdrawal from strategy
+        // Use actual balance received from strategy
         uint256 balance = _asset.balanceOf(address(this));
         
-        // Allow for small rounding errors (0.01% tolerance)
-        uint256 tolerance = (assets * 1) / 10000; // 0.01%
+        // If we expected assets but got less, use what we have
+        // This handles cases where strategy returns actual amount via swap
         if (balance < assets) {
-            // If balance is insufficient but within tolerance, adjust the withdrawal amount
-            if (assets - balance <= tolerance) {
-                assets = balance; // Adjust to actual balance
-            } else {
-                revert("BolarityVault: Insufficient balance after withdrawal");
-            }
+            require(balance > 0, "BolarityVault: No assets available for withdrawal");
+            assets = balance;
         }
         
         // Burn shares and transfer assets
@@ -505,18 +501,14 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
         // Execute withdrawal from strategy if needed
         _executeWithdraw(assets, strategyData);
         
-        // Check balance after withdrawal from strategy
+        // Use actual balance received from strategy
         uint256 balance = _asset.balanceOf(address(this));
         
-        // Allow for small rounding errors (0.01% tolerance)
-        uint256 tolerance = (assets * 1) / 10000; // 0.01%
+        // If we expected assets but got less, use what we have
+        // This handles cases where strategy returns actual amount via swap
         if (balance < assets) {
-            // If balance is insufficient but within tolerance, adjust the withdrawal amount
-            if (assets - balance <= tolerance) {
-                assets = balance; // Adjust to actual balance
-            } else {
-                revert("BolarityVault: Insufficient balance after withdrawal");
-            }
+            require(balance > 0, "BolarityVault: No assets available for withdrawal");
+            assets = balance;
         }
         
         // Burn shares and transfer assets
@@ -697,27 +689,8 @@ contract BolarityVault is IBolarityVault, ERC20, Ownable, ReentrancyGuard, Pausa
             require(success, "BolarityVault: Strategy divest failed");
             require(returnData.length >= 64, "BolarityVault: Invalid return data");
             
-            // Decode return values (accountedOut is used for validation, exitGain for fees)
-            (, uint256 exitGain) = abi.decode(returnData, (uint256, uint256));
-            
-            // Handle exit gain fee if any
-            if (exitGain > 0 && perfFeeBps > 0) {
-                uint256 feeAssetsOnExit = (exitGain * perfFeeBps) / BPS_DIVISOR;
-                uint256 S0 = totalSupply();
-                uint256 A0 = totalAssets();
-                
-                if (S0 > 0 && feeAssetsOnExit > 0) {
-                    uint256 feeShares = (feeAssetsOnExit * S0) / A0;
-                    if (feeShares > 0) {
-                        _mint(feeCollector, feeShares);
-                        // Update lastP only if it's higher (maintain high water mark)
-                        uint256 newP = (totalAssets() * PRECISION) / totalSupply();
-                        if (newP > lastP) {
-                            lastP = newP;
-                        }
-                    }
-                }
-            }
+            // Decode return values (accountedOut is used for validation)
+            // Note: exitGain is not used here as entry gain fees are already handled in deposit
             
             emit Divested(strategy, toWithdraw);
         }
