@@ -11,7 +11,7 @@ const { PendleSDK, CHAINS } = require('./PendleSDK');
 // ========== CONFIGURATION ==========
 const config = {
     chainId: CHAINS.base.id,
-    rpcUrl: process.env.RPC_URL_8453 || 'https://1rpc.io/base',
+    rpcUrl: process.env.RPC_URL_8453 || 'https://mainnet.base.org',
     receiver: process.env.PENDLE_RECEIVER_ADDRESS || '0x8271A5Fcb45066D77F88288f4c076E55fD61ffEA',
     privateKey: process.env.PRIVATE_KEY, // Optional for quotes
     slippage: 0.01,
@@ -20,6 +20,7 @@ const config = {
 
 const MARKET = process.env.PENDLE_MARKET_ADDRESS || '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
 const PT_TOKEN = process.env.PENDLE_PT_ADDRESS || '0xb04cee9901c0a8d783fe280ded66e60c13a4e296';
+const YT_TOKEN = process.env.PENDLE_YT_ADDRESS;
 
 // ========== EXAMPLE 1: ENHANCED QUOTE WITH APY ==========
 async function example1_getQuote() {
@@ -232,6 +233,68 @@ async function example5_fullArbitrage() {
     }
 }
 
+// ========== EXAMPLE 6: REDEEM PT & YT ==========
+async function example6_redeemTokens() {
+    console.log('\n=== Example 6: Redeem PT & YT to Underlying ===');
+
+    const sdk = new PendleSDK(config);
+
+    try {
+        if (!YT_TOKEN) {
+            console.log('❌ YT token address not configured');
+            console.log('💡 Set PENDLE_YT_ADDRESS in your .env file');
+            console.log('💡 You can get YT token address from Pendle market data');
+            return;
+        }
+
+        console.log('📊 Getting redeem quote...');
+
+        // Option 1: Redeem to USDC (exact match of your working request)
+        const redeemQuote = await sdk.getRedeemQuote(
+            YT_TOKEN,                    // YT token address
+            0.1,                         // Amount of YT to redeem (matches your working 100000)
+            CHAINS.base.usdc,            // tokenOut (USDC like your curl)
+            'kyberswap,okx',             // aggregators
+            6                            // YT token decimals (known value)
+        );
+
+        console.log('✅ Redeem Quote:');
+        console.log('├─ YT Input:', redeemQuote.amountIn, 'YT');
+        console.log('├─ USDC Output:', redeemQuote.amountOut.toFixed(6), 'USDC');
+        console.log('├─ Exchange Rate:', redeemQuote.exchangeRate.toFixed(6));
+        console.log('├─ Price Impact:', (redeemQuote.priceImpact * 100).toFixed(4) + '%');
+        console.log('└─ Gas Limit:', redeemQuote.gas);
+
+        console.log('\n💡 This redeem converts 0.1 YT to USDC using your exact working parameters');
+        console.log('💡 To test different amounts, modify the 0.1 value in the code');
+
+        // Execute redeem if private key is available
+        if (config.privateKey) {
+            console.log('\n🔄 Executing redeem transaction...');
+            const result = await sdk.executeRedeem(redeemQuote);
+
+            if (result.success) {
+                console.log('✅ Redeem successful:');
+                console.log('├─ Hash:', result.hash);
+                console.log('├─ Gas Used:', result.gasUsed || 'N/A');
+                console.log('└─ Block:', result.receipt?.blockNumber || 'N/A');
+            } else {
+                console.log('❌ Redeem failed:', result.error);
+            }
+
+            return result;
+        } else {
+            console.log('⚠️  Skipping execution - PRIVATE_KEY not provided');
+            return { quote: redeemQuote, dryRun: true };
+        }
+
+    } catch (error) {
+        console.error('❌ Redeem failed:', error.message);
+        console.log('💡 Note: Make sure YT_TOKEN address is valid');
+        console.log('💡 You can get YT token address from the market data');
+    }
+}
+
 // ========== FRONTEND INTEGRATION EXAMPLE ==========
 function frontendExample() {
     console.log('\n=== Frontend Integration Example ===');
@@ -292,25 +355,99 @@ async function executeArbitrage(tokenAddress, amount) {
     `);
 }
 
-// ========== MAIN EXECUTION ==========
-async function main() {
-    console.log('🚀 Pendle SDK Examples');
+// ========== INTERACTIVE MENU ==========
+async function showMenu() {
+    console.log('\n🚀 Pendle SDK Examples - Interactive Menu');
     console.log('='.repeat(50));
+    console.log('1️⃣  Get Enhanced Quote with APY');
+    console.log('2️⃣  Maturity and APY Analysis');
+    console.log('3️⃣  Dry Run Arbitrage Simulation');
+    console.log('4️⃣  Execute Single Swap (requires private key)');
+    console.log('5️⃣  Full Arbitrage (requires private key)');
+    console.log('6️⃣  Redeem PT & YT to Underlying (requires private key)');
+    console.log('7️⃣  Show Frontend Integration Code');
+    console.log('8️⃣  Run All Examples');
+    console.log('0️⃣  Exit');
+    console.log('='.repeat(50));
+}
 
+async function executeChoice(choice) {
+    switch (choice) {
+        case '1':
+            return await example1_getQuote();
+        case '2':
+            return await example2_maturityAndAPY();
+        case '3':
+            return await example3_dryRunArbitrage();
+        case '4':
+            return await example4_executeSwap();
+        case '5':
+            return await example5_fullArbitrage();
+        case '6':
+            return await example6_redeemTokens();
+        case '7':
+            return frontendExample();
+        case '8':
+            return await runAllExamples();
+        case '0':
+            console.log('👋 Goodbye!');
+            process.exit(0);
+        default:
+            console.log('❌ Invalid choice. Please select 0-8.');
+            return null;
+    }
+}
+
+async function runAllExamples() {
+    console.log('\n🔄 Running All Examples...');
     try {
-        // Run all examples
         await example1_getQuote();
         await example2_maturityAndAPY();
         await example3_dryRunArbitrage();
         await example4_executeSwap();
         await example5_fullArbitrage();
-
+        await example6_redeemTokens();
         frontendExample();
-
         console.log('\n✅ All examples completed');
-
     } catch (error) {
         console.error('💥 Example failed:', error.message);
+    }
+}
+
+async function main() {
+    console.log('🚀 Pendle SDK Examples');
+    console.log('Current Configuration:');
+    console.log('├─ Chain:', CHAINS.base.name, `(${CHAINS.base.id})`);
+    console.log('├─ Market:', MARKET.slice(0, 10) + '...');
+    console.log('├─ PT Token:', PT_TOKEN.slice(0, 10) + '...');
+    console.log('└─ Has Private Key:', config.privateKey ? 'Yes ✅' : 'No ⚠️ (read-only mode)');
+
+    const readline = require('readline');
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const question = (prompt) => new Promise((resolve) => rl.question(prompt, resolve));
+
+    try {
+        while (true) {
+            await showMenu();
+            const choice = await question('\nSelect an option (0-8): ');
+
+            console.log('\n' + '='.repeat(50));
+            await executeChoice(choice.trim());
+
+            if (choice.trim() === '0') break;
+
+            console.log('\n' + '='.repeat(50));
+            const continueChoice = await question('Press Enter to continue or type "exit" to quit: ');
+            if (continueChoice.toLowerCase() === 'exit') break;
+        }
+    } catch (error) {
+        console.error('💥 Application error:', error.message);
+    } finally {
+        rl.close();
     }
 }
 
@@ -320,7 +457,10 @@ module.exports = {
     example2_maturityAndAPY,
     example3_dryRunArbitrage,
     example4_executeSwap,
-    example5_fullArbitrage
+    example5_fullArbitrage,
+    example6_redeemTokens,
+    runAllExamples,
+    main
 };
 
 // Run if called directly
