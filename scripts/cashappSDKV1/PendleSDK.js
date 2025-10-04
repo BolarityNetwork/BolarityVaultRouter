@@ -279,6 +279,92 @@ class PendleSDK {
     }
 
     /**
+     * Get redeem quote - Convert PT & YT back to underlying tokens
+     * Based on Pendle API: /v2/sdk/{chainId}/redeem
+     */
+    async getRedeemQuote(yt, amountIn, tokenOut = null, aggregators = null, ytDecimals = null) {
+        try {
+            // Get token decimals - use provided or query dynamically
+            const actualYtDecimals = ytDecimals || await this._getTokenDecimals(yt);
+            const tokenOutDecimals = tokenOut ? await this._getTokenDecimals(tokenOut) : 18;
+
+            const url = `https://api-v2.pendle.finance/core/v2/sdk/${this.chainId}/redeem`;
+            const params = {
+                receiver: this.receiver,
+                slippage: this.slippage.toString(),
+                enableAggregator: true,
+                yt,
+                amountIn: this._toWei(amountIn, actualYtDecimals)
+            };
+
+            // Optional parameters
+            if (tokenOut) params.tokenOut = tokenOut;
+            if (aggregators) params.aggregators = aggregators;
+
+            this._log(`Getting redeem quote: ${amountIn} YT → ${tokenOut || 'underlying'}`);
+
+            const response = await axios.get(url, { params });
+            const { data, tx, tokenApprovals } = response.data;
+
+            // Calculate amounts
+            const amountOut = this._fromWei(data.amountOut, tokenOutDecimals);
+
+            return new SwapQuote({
+                amountIn,
+                amountOut,
+                priceImpact: data.priceImpact || 0,
+                slippage: this.slippage,
+                calldata: tx,
+                approvals: tokenApprovals,
+                gas: tx.gasLimit,
+                maturityDate: null, // Not applicable for redeem
+                daysToMaturity: null,
+                apy: null
+            });
+
+        } catch (error) {
+            throw new Error(`Redeem quote failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Execute redeem transaction - Convert PT & YT to underlying tokens
+     * Returns: TxResult
+     */
+    async executeRedeem(redeemQuote) {
+        if (!this.privateKey) {
+            throw new Error('privateKey required for execution');
+        }
+
+        try {
+            const wallet = this._getWallet();
+
+            // Handle approvals first
+            await this._handleApprovals(wallet, redeemQuote.approvals);
+
+            // Execute redeem
+            const tx = await wallet.sendTransaction({
+                to: redeemQuote.calldata.to,
+                data: redeemQuote.calldata.data,
+                value: redeemQuote.calldata.value || '0'
+            });
+
+            this._log(`Redeem transaction sent: ${tx.hash}`);
+
+            const receipt = await tx.wait();
+
+            return TxResult.success({
+                hash: tx.hash,
+                receipt,
+                gasUsed: receipt?.gasUsed?.toString()
+            });
+
+        } catch (error) {
+            return TxResult.failure(error);
+        }
+    }
+
+    /**
      * Execute swap transaction
      * Returns: TxResult
      */
