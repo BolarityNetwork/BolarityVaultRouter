@@ -7,6 +7,7 @@
  */
 require('dotenv').config();
 const { PendleSDK, CHAINS } = require('./PendleSDK');
+const { pendle } = require('./config');
 
 // ========== CONFIGURATION ==========
 const config = {
@@ -18,9 +19,21 @@ const config = {
     verbose: true
 };
 
-const MARKET = process.env.PENDLE_MARKET_ADDRESS || '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
-const PT_TOKEN = process.env.PENDLE_PT_ADDRESS || '0xb04cee9901c0a8d783fe280ded66e60c13a4e296';
-const YT_TOKEN = process.env.PENDLE_YT_ADDRESS;
+const DEFAULT_MARKET = '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
+const MARKET = process.env.PENDLE_MARKET_ADDRESS || DEFAULT_MARKET;
+const MARKET_META = pendle.resolvePendleMarket(MARKET) || {};
+
+if (!MARKET_META.address) {
+    console.warn('⚠️  Pendle market not found in local config. Update src/sdk/config/pendle.js to include it.');
+}
+
+const UNDERLYING_TOKEN = MARKET_META.underlying || CHAINS.base.usdc;
+const PT_TOKEN = MARKET_META.pt;
+const YT_TOKEN = MARKET_META.yt;
+
+if (!PT_TOKEN) {
+    console.warn('⚠️  PT token not defined for selected market. Update src/sdk/config/pendle.js.');
+}
 
 // ========== EXAMPLE 1: ENHANCED QUOTE WITH APY ==========
 async function example1_getQuote() {
@@ -30,9 +43,9 @@ async function example1_getQuote() {
 
     try {
         const quote = await sdk.getQuote(
-            CHAINS.base.usdc,  // USDC
-            PT_TOKEN,          // PT Token
-            100,               // 100 USDC
+            UNDERLYING_TOKEN,
+            PT_TOKEN,
+            100,
             MARKET
         );
 
@@ -84,7 +97,7 @@ async function example2_maturityAndAPY() {
 
         for (const amount of amounts) {
             try {
-                const quote = await sdk.getQuote(CHAINS.base.usdc, PT_TOKEN, amount, MARKET);
+                const quote = await sdk.getQuote(UNDERLYING_TOKEN, PT_TOKEN, amount, MARKET);
                 console.log(`\n💰 ${amount} USDC Investment:`);
                 console.log('├─ Expected PT:', quote.amountOut.toFixed(6));
                 console.log('├─ Profit:', quote.profit.toFixed(6), 'PT');
@@ -101,7 +114,7 @@ async function example2_maturityAndAPY() {
 
         // Use the convenience method
         console.log('\n🎯 Using APY Example Method (100 USDC):');
-        const exampleQuote = await sdk.getQuoteWithAPYExample(CHAINS.base.usdc, PT_TOKEN, MARKET, 100);
+        const exampleQuote = await sdk.getQuoteWithAPYExample(UNDERLYING_TOKEN, PT_TOKEN, MARKET, 100);
         console.log('├─ Example Amount:', exampleQuote.exampleAmount, 'USDC');
         console.log('├─ Example Profit:', exampleQuote.exampleProfit.toFixed(6), 'PT');
         console.log('└─ Example APY:', exampleQuote.exampleAPY?.toFixed(2) + '%' || 'N/A');
@@ -121,11 +134,11 @@ async function example3_dryRunArbitrage() {
 
     try {
         const result = await sdk.arbitrageStablecoin(
-            CHAINS.base.usdc,  // USDC address
-            100,               // 100 tokens
-            PT_TOKEN,          // PT Token
+            UNDERLYING_TOKEN,
+            100,
+            PT_TOKEN,
             MARKET,
-            { dryRun: true }   // No actual transactions
+            { dryRun: true }
         );
 
         console.log('✅ Arbitrage Simulation:');
@@ -154,7 +167,7 @@ async function example4_executeSwap() {
 
     try {
         // Get quote first
-        const quote = await sdk.getQuote(CHAINS.base.usdc, PT_TOKEN, 1, MARKET);
+        const quote = await sdk.getQuote(UNDERLYING_TOKEN, PT_TOKEN, 1, MARKET);
 
         if (!quote.isprofitable) {
             console.log('⚠️  Not profitable, skipping execution');
@@ -197,8 +210,8 @@ async function example5_fullArbitrage() {
 
     try {
         const result = await sdk.arbitrageStablecoin(
-            CHAINS.base.usdc,  // USDC address
-            100,               // 100 tokens
+            UNDERLYING_TOKEN,
+            100,
             PT_TOKEN,
             MARKET
         );
@@ -241,9 +254,8 @@ async function example6_redeemTokens() {
 
     try {
         if (!YT_TOKEN) {
-            console.log('❌ YT token address not configured');
-            console.log('💡 Set PENDLE_YT_ADDRESS in your .env file');
-            console.log('💡 You can get YT token address from Pendle market data');
+            console.log('❌ YT token address not configured in local pendle config');
+            console.log('💡 Update src/sdk/config/pendle.js for this market to include a yt address');
             return;
         }
 
@@ -251,9 +263,9 @@ async function example6_redeemTokens() {
 
         // Option 1: Redeem to USDC (exact match of your working request)
         const redeemQuote = await sdk.getRedeemQuote(
-            YT_TOKEN,                    // YT token address
-            0.1,                         // Amount of YT to redeem (matches your working 100000)
-            CHAINS.base.usdc,            // tokenOut (USDC like your curl)
+            YT_TOKEN,
+            0.1,
+            UNDERLYING_TOKEN,
             'kyberswap,okx',             // aggregators
             6                            // YT token decimals (known value)
         );
@@ -295,6 +307,31 @@ async function example6_redeemTokens() {
     }
 }
 
+// ========== EXAMPLE 7: SHOW PT BALANCE ==========
+async function example7_showPtBalance() {
+    console.log('\n=== Example 7: Show PT Balance ===');
+
+    const sdk = new PendleSDK(config);
+
+    try {
+        const targetAddress = process.env.PENDLE_BALANCE_ADDRESS || null;
+        const balanceInfo = await sdk.getPtBalance(MARKET, targetAddress);
+
+        console.log('✅ PT Balance Information:');
+        console.log('├─ Market:', balanceInfo.market);
+        console.log('├─ Account:', balanceInfo.account);
+        console.log('├─ PT Token:', balanceInfo.token);
+        console.log('├─ Decimals:', balanceInfo.decimals);
+        console.log('└─ Balance:', balanceInfo.balance);
+
+        return balanceInfo;
+
+    } catch (error) {
+        console.error('❌ Failed to fetch PT balance:', error.message);
+        console.log('💡 Hint: Ensure the market has a PT token configured and you provided a wallet (private key, receiver, or PENDLE_BALANCE_ADDRESS).');
+    }
+}
+
 // ========== FRONTEND INTEGRATION EXAMPLE ==========
 function frontendExample() {
     console.log('\n=== Frontend Integration Example ===');
@@ -302,6 +339,7 @@ function frontendExample() {
 // React/Vue/Angular usage:
 
 import { PendleSDK, CHAINS } from './PendleSDK';
+import { pendle } from './config';
 
 const sdk = new PendleSDK({
     chainId: CHAINS.base.id,
@@ -311,12 +349,15 @@ const sdk = new PendleSDK({
     slippage: 0.01
 });
 
+const MARKET = '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
+const marketMeta = pendle.resolvePendleMarket(MARKET);
+
 // Get quote for UI
 async function getQuote(amount) {
     try {
         const quote = await sdk.getQuote(
-            CHAINS.base.usdc,
-            PT_TOKEN,
+            marketMeta.underlying,
+            marketMeta.pt,
             amount,
             MARKET
         );
@@ -336,7 +377,7 @@ async function getQuote(amount) {
 // Execute transaction
 async function executeArbitrage(tokenAddress, amount) {
     try {
-        const result = await sdk.arbitrageStablecoin(tokenAddress, amount, PT_TOKEN, MARKET);
+        const result = await sdk.arbitrageStablecoin(tokenAddress, amount, marketMeta.pt, MARKET);
 
         if (result.success) {
             return {
@@ -365,8 +406,9 @@ async function showMenu() {
     console.log('4️⃣  Execute Single Swap (requires private key)');
     console.log('5️⃣  Full Arbitrage (requires private key)');
     console.log('6️⃣  Redeem PT & YT to Underlying (requires private key)');
-    console.log('7️⃣  Show Frontend Integration Code');
-    console.log('8️⃣  Run All Examples');
+    console.log('7️⃣  Show PT Balance');
+    console.log('8️⃣  Show Frontend Integration Code');
+    console.log('9️⃣  Run All Examples');
     console.log('0️⃣  Exit');
     console.log('='.repeat(50));
 }
@@ -386,14 +428,16 @@ async function executeChoice(choice) {
         case '6':
             return await example6_redeemTokens();
         case '7':
-            return frontendExample();
+            return await example7_showPtBalance();
         case '8':
+            return frontendExample();
+        case '9':
             return await runAllExamples();
         case '0':
             console.log('👋 Goodbye!');
             process.exit(0);
         default:
-            console.log('❌ Invalid choice. Please select 0-8.');
+            console.log('❌ Invalid choice. Please select 0-9.');
             return null;
     }
 }
@@ -407,6 +451,7 @@ async function runAllExamples() {
         await example4_executeSwap();
         await example5_fullArbitrage();
         await example6_redeemTokens();
+        await example7_showPtBalance();
         frontendExample();
         console.log('\n✅ All examples completed');
     } catch (error) {
@@ -433,7 +478,7 @@ async function main() {
     try {
         while (true) {
             await showMenu();
-            const choice = await question('\nSelect an option (0-8): ');
+            const choice = await question('\nSelect an option (0-9): ');
 
             console.log('\n' + '='.repeat(50));
             await executeChoice(choice.trim());
@@ -459,6 +504,7 @@ module.exports = {
     example4_executeSwap,
     example5_fullArbitrage,
     example6_redeemTokens,
+    example7_showPtBalance,
     runAllExamples,
     main
 };

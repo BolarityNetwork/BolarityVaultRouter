@@ -11,24 +11,18 @@
 
 const axios = require('axios');
 const { ethers } = require('ethers');
+const { pendle, common } = require('./config');
 
-// ========== CONSTANTS (No magic numbers) ==========
-const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
-const MAX_UINT256 = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-
-const CHAINS = {
-    ethereum: { id: 1, name: 'Ethereum', usdc: '0xA0b86a33E6441E1A1E5c87A3dC9E1e18e8f0b456' },
-    bsc: { id: 56, name: 'BSC', usdc: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d' },
-    polygon: { id: 137, name: 'Polygon', usdc: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' },
-    base: { id: 8453, name: 'Base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
-    arbitrum: { id: 42161, name: 'Arbitrum', usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' }
-};
-
-const ERC20_ABI = {
-    decimals: '0x313ce567',
-    allowance: '0xdd62ed3e',
-    approve: '0x095ea7b3'
-};
+// Shared configuration
+const {
+    PENDLE_ROUTER,
+    PENDLE_API_BASE,
+    PENDLE_CHAINS,
+    ERC20_ABI,
+    PENDLE_MARKETS,
+    resolvePendleMarket
+} = pendle;
+const { MAX_UINT256 } = common;
 
 // ========== CORE DATA STRUCTURES ==========
 
@@ -118,6 +112,7 @@ class PendleSDK {
 
         this.chainId = config.chainId;
         this.chain = this._getChain(config.chainId);
+        this.chainKey = this.chain.key;
         this.rpcUrl = config.rpcUrl;
         this.slippage = config.slippage || 0.01;
         this.receiver = config.receiver;
@@ -127,6 +122,9 @@ class PendleSDK {
         this._provider = null;
         this._wallet = null;
 
+        // Market registry for configured markets on this chain
+        this.markets = PENDLE_MARKETS[this.chainKey]?.markets || {};
+
         // Simple logging
         this.verbose = config.verbose || false;
     }
@@ -134,18 +132,94 @@ class PendleSDK {
     // ========== PUBLIC API ==========
 
     /**
+     * Return metadata for a configured Pendle market
+     */
+    getMarketConfig(market) {
+        const meta = this._resolveMarket(market);
+        return { ...meta };
+    }
+
+    /**
+     * Convenience helper returning token addresses for a market
+     */
+    getMarketTokens(market) {
+        const meta = this.getMarketConfig(market);
+        return {
+            underlying: meta.underlying,
+            sy: meta.sy,
+            pt: meta.pt,
+            yt: meta.yt,
+            maturity: meta.maturity
+        };
+    }
+
+    /**
+     * Get PT token balance for an account on a given market
+     * @param {string} market - Market alias or address
+     * @param {string|null} userAddress - Account address (defaults to wallet/receiver)
+     * @returns {Promise<Object>} balance info with formatted amount
+     */
+    async getPtBalance(market, userAddress = null) {
+        const marketMeta = this._resolveMarket(market);
+
+        if (!marketMeta.pt) {
+            throw new Error(`PT token not configured for market ${marketMeta.alias || marketMeta.address}`);
+        }
+
+        let account = userAddress;
+        if (!account) {
+            if (this.privateKey) {
+                account = this._getWallet().address;
+            } else if (this.receiver) {
+                account = this.receiver;
+            } else {
+                throw new Error('userAddress is required when privateKey or receiver is not configured');
+            }
+        }
+
+        const accountAddress = ethers.getAddress(account);
+        const ptAddress = ethers.getAddress(marketMeta.pt);
+        const decimals = await this._getTokenDecimals(ptAddress);
+
+        const balanceData = await this._getProvider().call({
+            to: ptAddress,
+            data: ERC20_ABI.balanceOf + ethers.zeroPadValue(accountAddress, 32).slice(2)
+        });
+
+        const balanceRaw = balanceData && balanceData !== '0x'
+            ? BigInt(balanceData)
+            : 0n;
+
+        const formatted = ethers.formatUnits(balanceRaw, decimals);
+
+        return {
+            market: marketMeta.alias || marketMeta.address,
+            account: accountAddress,
+            token: ptAddress,
+            balance: formatted,
+            balanceRaw: balanceRaw.toString(),
+            decimals
+        };
+    }
+
+    /**
      * Get PT token maturity information
      * Returns: { maturityDate, daysToMaturity }
      */
     async getMaturityInfo(market) {
         try {
+            const marketMeta = this._resolveMarket(market, { optional: true });
+            const marketAddress = marketMeta?.address || market;
+            const targetChainId = marketMeta?.chainId || this.chainId;
+
             // Use the correct Pendle API endpoint for market info
-            const url = `https://api-v2.pendle.finance/core/v1/${this.chainId}/markets`;
+            const url = `${PENDLE_API_BASE}/core/v1/${targetChainId}/markets`;
             const response = await axios.get(url);
 
             // Find the specific market
+            const lowerAddress = marketAddress.toLowerCase();
             const marketData = response.data.results?.find(m =>
-                m.address.toLowerCase() === market.toLowerCase()
+                m.address.toLowerCase() === lowerAddress
             );
 
             if (marketData && marketData.expiry) {
@@ -163,7 +237,7 @@ class PendleSDK {
             }
 
             // If market not found in list, try direct market query
-            const directUrl = `https://api-v2.pendle.finance/core/v1/${this.chainId}/markets/${market}`;
+            const directUrl = `${PENDLE_API_BASE}/core/v1/${targetChainId}/markets/${marketAddress}`;
             const directResponse = await axios.get(directUrl);
 
             if (directResponse.data.expiry) {
@@ -216,19 +290,33 @@ class PendleSDK {
      */
     async getQuote(tokenIn, tokenOut, amountIn, market) {
         try {
+            const marketMeta = this._resolveMarket(market, { optional: true });
+            const marketAddress = marketMeta?.address || market;
+            const targetChainId = marketMeta?.chainId || this.chainId;
+            const resolvedTokenIn = this._resolveMarketToken(tokenIn, marketMeta, 'underlying');
+            const resolvedTokenOut = this._resolveMarketToken(tokenOut, marketMeta, 'pt');
+
+            if (!resolvedTokenIn) {
+                throw new Error('tokenIn is required – provide explicit address or configure underlying in config');
+            }
+
+            if (!resolvedTokenOut) {
+                throw new Error('tokenOut is required – provide explicit address or configure PT in config');
+            }
+
             // Get token decimals dynamically
-            const tokenInDecimals = await this._getTokenDecimals(tokenIn);
+            const tokenInDecimals = await this._getTokenDecimals(resolvedTokenIn);
             console.log('Token In Decimals:', tokenInDecimals);
-            const tokenOutDecimals = await this._getTokenDecimals(tokenOut);
+            const tokenOutDecimals = await this._getTokenDecimals(resolvedTokenOut);
             console.log('Token Out Decimals:', tokenOutDecimals);
 
             // Get swap quote
-            const url = `https://api-v2.pendle.finance/core/v2/sdk/${this.chainId}/markets/${market}/swap`;
+            const url = `${PENDLE_API_BASE}/core/v2/sdk/${targetChainId}/markets/${marketAddress}/swap`;
             const params = {
                 receiver: this.receiver,
                 slippage: this.slippage.toString(),
-                tokenIn,
-                tokenOut,
+                tokenIn: resolvedTokenIn,
+                tokenOut: resolvedTokenOut,
                 amountIn: this._toWei(amountIn, tokenInDecimals),
                 enableAggregator: 'true'
             };
@@ -288,7 +376,7 @@ class PendleSDK {
             const actualYtDecimals = ytDecimals || await this._getTokenDecimals(yt);
             const tokenOutDecimals = tokenOut ? await this._getTokenDecimals(tokenOut) : 18;
 
-            const url = `https://api-v2.pendle.finance/core/v2/sdk/${this.chainId}/redeem`;
+            const url = `${PENDLE_API_BASE}/core/v2/sdk/${this.chainId}/redeem`;
             const params = {
                 receiver: this.receiver,
                 slippage: this.slippage.toString(),
@@ -414,9 +502,21 @@ class PendleSDK {
         };
 
         try {
+            const marketMeta = this._resolveMarket(market);
+            const stablecoin = this._resolveMarketToken(stablecoinAddress, marketMeta, 'underlying');
+            const ptAddress = this._resolveMarketToken(ptToken, marketMeta, 'pt');
+
+            if (!stablecoin) {
+                throw new Error('Stablecoin address required – configure underlying token or pass explicit address');
+            }
+
+            if (!ptAddress) {
+                throw new Error('PT token address required – configure PT token or pass explicit address');
+            }
+
             // Step 1: Stablecoin -> PT
             this._log(`Step 1: Converting ${amount} tokens to PT`);
-            const quote1 = await this.getQuote(stablecoinAddress, ptToken, amount, market);
+            const quote1 = await this.getQuote(stablecoin, ptAddress, amount, market);
 
             if (!quote1.isprofitable) {
                 throw new Error('Not profitable');
@@ -439,7 +539,7 @@ class PendleSDK {
             const profitPT = quote1.profit;
             if (profitPT > 0.01) { // Minimum profitable amount
                 this._log(`Step 2: Converting ${profitPT} PT profit back to tokens`);
-                const quote2 = await this.getQuote(ptToken, stablecoinAddress, profitPT, market);
+                const quote2 = await this.getQuote(ptAddress, stablecoin, profitPT, market);
                 const tx2 = await this.executeSwap(quote2);
 
                 if (tx2.success) {
@@ -468,9 +568,10 @@ class PendleSDK {
     // ========== INTERNAL METHODS ==========
 
     _getChain(chainId) {
-        const chain = Object.values(CHAINS).find(c => c.id === chainId);
-        if (!chain) throw new Error(`Unsupported chain: ${chainId}`);
-        return chain;
+        const entry = Object.entries(PENDLE_CHAINS).find(([, chain]) => chain.id === chainId);
+        if (!entry) throw new Error(`Unsupported chain: ${chainId}`);
+        const [key, chain] = entry;
+        return { ...chain, key };
     }
 
     _getProvider() {
@@ -527,6 +628,77 @@ class PendleSDK {
         }
     }
 
+    _resolveMarketToken(token, marketMeta, role) {
+        if (!marketMeta) {
+            return token;
+        }
+
+        if (!token) {
+            return marketMeta[role] || null;
+        }
+
+        if (typeof token !== 'string') {
+            return token;
+        }
+
+        const normalized = token.trim().toLowerCase();
+
+        if (normalized === role || normalized === `market:${role}`) {
+            return marketMeta[role] || null;
+        }
+
+        if (role === 'underlying' && normalized === 'underlying') {
+            return marketMeta.underlying || null;
+        }
+
+        if (role === 'pt' && normalized === 'pt') {
+            return marketMeta.pt || null;
+        }
+
+        if (role === 'yt' && normalized === 'yt') {
+            return marketMeta.yt || null;
+        }
+
+        if (role === 'sy' && normalized === 'sy') {
+            return marketMeta.sy || null;
+        }
+
+        return token;
+    }
+
+    _resolveMarket(market, { optional = false } = {}) {
+        if (!market) {
+            if (optional) return null;
+            throw new Error('Market identifier is required');
+        }
+
+        if (typeof market === 'object') {
+            if (market.chainId && market.chainId !== this.chainId) {
+                throw new Error(`Market belongs to chain ${market.chainId}, SDK configured for chain ${this.chainId}`);
+            }
+            return market;
+        }
+
+        if (typeof market !== 'string') {
+            if (optional) return null;
+            throw new Error(`Unsupported market identifier type: ${typeof market}`);
+        }
+
+        const trimmed = market.trim();
+        const resolved = resolvePendleMarket(trimmed);
+
+        if (!resolved) {
+            if (optional) return null;
+            throw new Error(`Unknown Pendle market: ${market}. Add it to src/sdk/config/pendle.js`);
+        }
+
+        if (resolved.chainId && resolved.chainId !== this.chainId) {
+            throw new Error(`Pendle market ${market} is configured for chain ${resolved.chain}, SDK is using chain ${this.chain.name}`);
+        }
+
+        return resolved;
+    }
+
     async _getTokenDecimals(tokenAddress) {
         try {
             // Ensure proper address format
@@ -564,6 +736,6 @@ module.exports = {
     PendleSDK,
     SwapQuote,
     TxResult,
-    CHAINS,
+    CHAINS: PENDLE_CHAINS,
     PENDLE_ROUTER
 };

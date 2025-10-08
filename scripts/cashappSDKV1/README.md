@@ -1,189 +1,361 @@
-# DeFi SDK Suite v3.0
+# DeFi SDK Suite
 
-> "Good taste is a matter of eliminating special cases." - Linus Torvalds
+> “Good taste is a matter of eliminating special cases.” – Linus Torvalds
 
-A unified SDK suite for **Pendle Protocol** arbitrage and **Compound V3** lending, featuring real-time APY calculation, maturity tracking, and seamless CashApp integration. Built with Linux kernel design principles.
+Unified JavaScript/TypeScript tooling for **Pendle Protocol arbitrage**, **Compound V3 lending**, and **cross-protocol portfolio analytics**. The suite powers trading bots, yield dashboards, and backend APIs with a consistent data-first architecture.
 
-## Philosophy
+---
 
-- **Simplicity**: No unnecessary complexity
-- **Good Taste**: Eliminate special cases
-- **Data First**: Proper data structures over clever code
-- **Real Problems**: Solve actual arbitrage needs
-- **Real Data**: Live maturity and APY calculations
+## Table of Contents
 
-## 🚀 What's New in v3.0
+1. [Architecture Overview](#architecture-overview)
+2. [Installation & Setup](#installation--setup)
+3. [Configuration](#configuration)
+   - [.env Variables](#env-variables)
+   - [SDK Config Files](#sdk-config-files)
+4. [Modules & APIs](#modules--apis)
+   - [PendleSDK](#pendlesdk)
+   - [CompoundSDK](#compoundsdk)
+   - [UnifiedSDK](#unifiedsdk)
+5. [Examples & CLI](#examples--cli)
+   - [TypeScript Unified Balance Script](#typescript-unified-balance-script)
+   - [REST API Integration](#rest-api-integration)
+6. [Portfolio Token Scanning](#portfolio-token-scanning)
+7. [Testing & Troubleshooting](#testing--troubleshooting)
+8. [Roadmap & Contributions](#roadmap--contributions)
 
-### Pendle SDK Enhancements
-✅ **Real-time Maturity Tracking** - Live PT token expiry dates from Pendle API
-✅ **Automatic APY Calculation** - Compound interest rates based on actual time remaining
-✅ **Multi-Token Arbitrage** - Support any ERC20 token with dynamic decimals
-✅ **Enhanced Quote Data** - All financial metrics in one immutable object
+---
 
-### 🆕 Compound V3 Integration
-✅ **Base Chain Support** - Full Compound V3 integration on Base network
-✅ **Real APR Calculation** - Live supply rates from Compound protocol
-✅ **COMP Rewards Tracking** - Automatic reward accumulation monitoring
-✅ **CashApp Integration** - Savings dashboard ready APIs
-✅ **ethers v6 Compatible** - Native BigInt support for precision
-✅ **Interactive Examples** - Choose-your-own demonstration system
+## Architecture Overview
 
-## Quick Start
+```
+├─ PendleSDK        # Quotes, maturities, executions
+├─ CompoundSDK      # APR, supply/withdraw, TVL analytics
+└─ UnifiedSDK       # Aggregation layer + wallet scanner
+    ├─ getUserBalance()           -> per protocol
+    └─ getUnifiedBalanceSummary() -> protocols + wallet snapshot
+```
 
-### Pendle Protocol Arbitrage
+- **Language:** Node.js (CommonJS) with optional TypeScript entry points.
+- **RPC Layer:** ethers v6 `JsonRpcProvider` (bring your own endpoints).
+- **External deps:** `@aave/client`, `axios`, `neverthrow` (via Aave SDK).
+- **Configuration:** Plain JS files under `src/sdk/config/` for easy editing.
+- **Philosophy:** Fewer special cases, explicit data structures, transparent errors.
+
+---
+
+## Installation & Setup
+
+1. Install dependencies:
+   ```bash
+   npm install
+   npm install --save-dev typescript ts-node    # only if running TS example
+   npm install @aave/client                     # required for Aave integration
+   ```
+
+2. Copy env template and adjust:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Populate `.env` with at least:
+   ```ini
+   PRIVATE_KEY=0x...
+   ACCOUNT_ADDRESS=0x...          # optional if PRIVATE_KEY set
+   RPC_URL_8453=https://your-base-rpc
+   UNIFIED_RPC_URL=https://...    # optional, overrides per-chain RPC
+   ```
+
+4. (Optional) Configure default markets in `src/sdk/config/` if you need to add chains or tokens.
+
+---
+
+## Configuration
+
+### .env Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PRIVATE_KEY` | Used by Compound/Pendle SDK for signing transactions & deriving default account. |
+| `ACCOUNT_ADDRESS` | Override signer-derived address when only read methods are needed. |
+| `RPC_URL_8453`, `RPC_URL` | Chain-specific fallback RPC endpoints (Base by default). |
+| `UNIFIED_RPC_URL` | Global override used by `UnifiedSDK` wallet scanner. |
+| `UNIFIED_COMPOUND_ASSETS` | CSV whitelist (e.g. `USDC,WETH`). Leave unset to auto-discover base assets. |
+| `UNIFIED_PENDLE_MARKETS` | CSV of Pendle market aliases/addresses. Defaults to config file entries. |
+| `UNIFIED_AAVE_MARKETS` | CSV of Aave market addresses. Script auto-discovers if omitted. |
+| `BALANCE_PROTOCOLS` | Subset for summary script (e.g. `compound,pendle`). |
+
+### SDK Config Files
+
+| File | Responsibility |
+|------|----------------|
+| `config/common.js` | Global constants (e.g. default public RPC endpoints). |
+| `config/compound.js` | Compound V3 market metadata per chain. |
+| `config/pendle.js` | Pendle market registry & helper lookup table. |
+| `config/portfolio.js` | Token classification for wallet scanning (stablecoins vs volatile assets). |
+| `config/index.js` | Aggregates configs used by SDK modules. |
+
+Modify these files to onboard new chains/markets without touching core logic.
+
+---
+
+## Modules & APIs
+
+### PendleSDK
+
+Initialize with chain, RPC and receiver or signer details. Key methods:
+
+| Method | Description |
+|--------|-------------|
+| `getQuote(tokenIn, tokenOut, amountIn, market)` | Enhanced PT quote with APY, maturity and profitability flags. |
+| `getMaturityInfo(market)` | Real-time maturity metadata via Pendle API. |
+| `arbitrageStablecoin(...)` | End-to-end arbitrage helper with multi-step simulation. |
+| `getPtBalance(market, user?)` | PT token balance lookup (used by aggregation layer). |
+
+Example:
 ```javascript
 const { PendleSDK, CHAINS } = require('./PendleSDK');
 
-const pendleSDK = new PendleSDK({
-    chainId: CHAINS.base.id,
-    rpcUrl: 'https://your-base-rpc.com',
-    receiver: '0x...',
-    privateKey: '0x...', // Optional for quotes
-    slippage: 0.01
+const sdk = new PendleSDK({
+  chainId: CHAINS.base.id,
+  rpcUrl: process.env.RPC_URL_8453,
+  receiver: process.env.PENDLE_RECEIVER_ADDRESS,
+  privateKey: process.env.PRIVATE_KEY,
+  slippage: 0.01
 });
 
-// Get enhanced quote with real-time APY
-const quote = await pendleSDK.getQuote(
-    CHAINS.base.usdc, '0xb04cee9901c0a8d783fe280ded66e60c13a4e296',
-    100, '0x44e2b05b2c17a12b37f11de18000922e64e23faa'
-);
-
-console.log(`APY: ${quote.apyPercentage.toFixed(2)}%`);
-console.log(`Days to maturity: ${quote.daysToMaturity.toFixed(1)}`);
+const quote = await sdk.getQuote(CHAINS.base.usdc, pendleMarket.pt, 100, pendleMarket.address);
+console.log(quote.apyPercentage);
 ```
 
-### 🆕 Compound V3 Lending
+### CompoundSDK
+
+Targeted at Compound V3 (Comet) markets. Core features:
+
+| Method | Purpose |
+|--------|---------|
+| `getTotalAPR(asset)` | Combines supply APR + COMP rewards. |
+| `getInterestAPR(asset)` / `getCompAPR(asset)` | Individual components. |
+| `getBalance(asset, user)` | Supplied amount + rewards (used by legacy flows). |
+| `supply(asset, amount)` / `withdraw(asset, amount)` | Transaction helpers (returns structured `CompoundResult`). |
+| `claimRewards(user)` | Claim COMP incentives. |
+| `getTVL(chainName, cometAddress?)` | Base + collateral TVL snapshot. |
+
+Example:
 ```javascript
 const { CompoundSDK } = require('./CompoundSDK');
 
-const compoundSDK = new CompoundSDK({
-    chainId: 8453,  // Base network
-    rpcUrl: 'https://your-base-rpc.com',
-    privateKey: '0x...', // Required for transactions
-    slippage: 0.005
+const compound = new CompoundSDK({
+  chainId: 8453,
+  rpcUrl: process.env.RPC_URL_8453,
+  privateKey: process.env.PRIVATE_KEY
 });
 
-// Get current APR rates
-const apr = await compoundSDK.getTotalAPR('USDC');
-console.log(`Base APR: ${apr.baseAPRPercentage.toFixed(2)}%`);
-console.log(`COMP APR: ${apr.compAPRPercentage.toFixed(2)}%`);
-console.log(`Total APR: ${apr.totalAPRPercentage.toFixed(2)}%`);
-
-// Supply to earn yield
-const result = await compoundSDK.supply('USDC', 1000);
-if (result.success) {
-    console.log(`Supplied! Tx: ${result.hash}`);
-}
-
-// 🆕 Get complete TVL (base + collateral like official example)
-const tvl = await compoundSDK.getTVL('base');
-console.log(`Total TVL: $${tvl.totalTVL.toLocaleString()}`);
-console.log(`Base TVL: $${tvl.baseTVL.toLocaleString()}`);
-console.log(`Collateral TVL: $${tvl.collateralTVL.toLocaleString()}`);
-console.log(`Assets: ${tvl.assets.length} different tokens`);
+const result = await compound.getTotalAPR('USDC');
+console.log(result.totalAPRPercentage);
 ```
 
-## Core Classes
+### UnifiedSDK
 
-### PendleSDK
-Main Pendle protocol interface. Handles PT token quotes, execution, and real-time maturity tracking.
+Aggregator & analytics layer that stitches Aave (`@aave/client`), Compound, and Pendle configurations.
 
-### 🆕 CompoundSDK
-Compound V3 lending protocol interface. Manages supply, withdraw, rewards, and APR calculations.
-
-### SwapQuote (Enhanced v3.0)
-Immutable Pendle quote data structure with computed properties:
-- `profit`: Calculated profit amount
-- `apyPercentage`: Real-time APY based on actual maturity ⭐
-- `daysToMaturity`: Precise countdown to PT expiry ⭐
-- `maturityDate`: Exact expiry date and time ⭐
-
-### 🆕 CompoundAPR
-Compound V3 APR data structure:
-- `baseAPRPercentage`: Supply interest rate
-- `compAPRPercentage`: COMP reward rate
-- `totalAPRPercentage`: Combined APR
-
-### 🆕 CompoundBalance
-User balance information:
-- `supplied`: Amount supplied to Compound
-- `compRewards`: Accrued COMP rewards
-- `totalValue`: Total value including interest
-
-### CompoundResult / TxResult
-Consistent transaction result format:
-- `success`: Boolean
-- `hash`: Transaction hash
-- `receipt`: Transaction receipt
-- `error`: Error message if failed
-
-## API Reference
-
-### Pendle SDK Methods
-
-#### getMaturityInfo(market)
-Returns: `{ maturityDate, daysToMaturity, maturityTimestamp }`
-
-Get real-time PT token maturity information from Pendle API.
-
-#### getQuote(tokenIn, tokenOut, amountIn, market) ⭐ Enhanced
-Returns: `SwapQuote` with real-time APY data
-
-#### arbitrageStablecoin(stablecoinAddress, amount, ptToken, market, options)
-Returns: Arbitrage result object
-
-Complete multi-token arbitrage flow with dynamic decimals support.
-
-### 🆕 Compound SDK Methods
-
-#### getTotalAPR(asset)
-Returns: `CompoundAPR` object with base + COMP rewards
-
-Get comprehensive APR breakdown for lending pools.
-
-#### getBalance(asset, userAddress)
-Returns: `CompoundBalance` with supplied amount and rewards
-
-Query user's lending position and accrued rewards.
-
-#### supply(asset, amount)
-Returns: `CompoundResult`
-
-Supply tokens to Compound V3 to start earning yield.
-
-#### withdraw(asset, amount)
-Returns: `CompoundResult`
-
-Withdraw supplied tokens plus accrued interest.
-
-#### claimRewards(userAddress)
-Returns: `CompoundResult`
-
-Claim accumulated COMP rewards.
-
-#### 🆕 getTVL(chainName, cometAddress) ⭐ Enhanced
-Returns: Complete TVL data object
-
-**Get complete Total Value Locked like official Compound example**
-
-Calculates base token + all collateral assets TVL across any chain and Comet market.
-
-Parameters:
-- `chainName`: 'ethereum' | 'base' | null (current)
-- `cometAddress`: Specific Comet contract address | null (use default)
-
-Returns:
 ```javascript
+const { UnifiedSDK, DefaultPriceOracle } = require('./UnifiedSDK');
+const { CompoundSDK } = require('./CompoundSDK');
+const { PendleSDK, CHAINS } = require('./PendleSDK');
+const { buildAaveClient } = require('./aave/client');
+
+const chainId = CHAINS.base.id;
+
+const unified = new UnifiedSDK({
+  chainId,
+  priceOracle: new DefaultPriceOracle(),
+  compound: { default: { sdk: new CompoundSDK({ chainId, rpcUrl }) } },
+  pendle: { default: { sdk: new PendleSDK({ chainId, rpcUrl }) } },
+  aave: {
+    [chainId]: {
+      client: buildAaveClient(),
+      markets: ['0xA238Dd80C259a72e81d7e4664a9801593F98d1c5']
+    }
+  }
+});
+```
+
+Key APIs:
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `getUserBalance({ chainId, protocol, accountAddress, currency })` | Per-protocol totals, items, metadata | `protocol` ∈ {`aave`,`compound`,`pendle`} |
+| `getUnifiedBalanceSummary({ chainId, accountAddress, protocols, includeItems })` | Aggregated deposits + wallet balances | Includes per-protocol results and wallet scan |
+
+`getUnifiedBalanceSummary` responds with:
+```ts
 {
-  totalTVL: number,      // Complete TVL (base + collateral)
-  baseTVL: number,       // Base token TVL only
-  collateralTVL: number, // All collateral assets TVL
-  chain: string,         // Chain name
-  cometAddress: string,  // Comet contract address
-  assets: Array,         // Detailed asset breakdown
-  timestamp: number      // Query timestamp
+  account,
+  chainId,
+  currency,
+  totals: {
+    usd,           // deposits + wallet
+    depositsUsd,   // Per-protocol sum
+    walletUsd      // On-chain configured tokens
+  },
+  protocols: UnifiedBalanceResult[],
+  wallet: {
+    stable: UnifiedBalanceItem[],
+    assets: UnifiedBalanceItem[],
+    totals: { usd, stableUsd, assetUsd },
+    failures: [...]
+  },
+  failures: [...],
+  timestamp
 }
 ```
+
+This single call powers REST endpoints that answer “what is user X worth across platforms?”.
+
+---
+
+## Examples & CLI
+
+### TypeScript Unified Balance Script
+
+Path: `src/sdk/examples-ts/unified-balance.ts`
+
+```bash
+npm install --save-dev typescript ts-node
+npm install @aave/client
+
+TS_NODE_PROJECT=tsconfig.unified.json \
+  npx ts-node src/sdk/examples-ts/unified-balance.ts
+```
+
+Output includes:
+1. **SUMMARY** – total USD (deposits + wallet tokens).
+2. **AAVE / COMPOUND / PENDLE** – each table from `getUserBalance`.
+3. **WALLET** – balances for tokens defined in `config/portfolio.js`.
+
+Adjust behaviour through env vars:
+
+| Variable | Effect |
+|----------|--------|
+| `BALANCE_PROTOCOLS` | Limit protocols (e.g. `compound,pendle`). |
+| `UNIFIED_COMPOUND_ASSETS` | Override auto-discovered Comet base assets. |
+| `UNIFIED_PENDLE_MARKETS` | Restrict Pendle markets. |
+| `UNIFIED_RPC_URL` | Dedicated RPC for wallet scanning (avoid public rate limits). |
+
+### REST API Integration
+
+See `examples-ts/README.md` for a full Express snippet. Highlights:
+
+- Cache SDK instances.
+- Use `getUnifiedBalanceSummary` when client omits `protocol` query.
+- Gate wallet scanning via API key or request limits if exposing publicly.
+
+---
+
+## Portfolio Token Scanning
+
+- Config file: `src/sdk/config/portfolio.js`
+- Structure per chain (numeric chainId):
+  ```js
+  {
+    8453: {
+      stable: [ { symbol: 'USDC', address: '0x...', decimals: 6 }, ... ],
+      assets: [ { symbol: 'WETH', address: '0x...', decimals: 18 }, ... ]
+    }
+  }
+  ```
+- Stablecoins assumed 1:1 USD peg; other assets priced via `DefaultPriceOracle` or overrides.
+- Supports native tokens by adding `isNative: true` and optional `decimals`.
+- Override per instance via:
+  ```js
+  new UnifiedSDK({ portfolioTokens: customMap, rpcUrls: { 8453: 'https://...' } });
+  ```
+
+---
+
+## Testing & Troubleshooting
+
+- **Protocol queries failing?**
+  - Ensure RPC URLs have sufficient throughput.
+  - For Aave, install `@aave/client@latest` and supply markets.
+- **Wallet scanner errors (`Exceeded quota usage`)?**
+  - Provide a private RPC (`UNIFIED_RPC_URL`).
+  - Reduce configured tokens or retry with rate limits.
+- **Compound WETH market revert**
+  - Known issue when calling `getRewardOwed`; SDK skips and reports under `failures`.
+- **TypeScript imports complaining**
+  - Ensure `TS_NODE_PROJECT=tsconfig.unified.json` or copy the provided `types.d.ts` declarations into your project.
+
+Legacy Node tests: `src/sdk/tests/unified-getUserBalance.test.js` (optional mock harness). You can remove this directory if relying exclusively on the TypeScript example.
+
+---
+
+## Roadmap & Contributions
+
+- Additional portfolio token presets (Arbitrum, Polygon, BSC).
+- Historical analytics (time-weighted balance changes).
+- Optional caching layer for price oracle lookups.
+- Native ESM build.
+
+Pull requests welcome! Please include:
+
+1. Clear description & motivation.
+2. Updates to config/docs when adding markets.
+3. Screenshots or logs for new outputs (e.g. summary tables).
+
+For questions or integration advice, reach out to the maintainers or open a discussion thread. Happy shipping! 🚀
+```javascript
+const { UnifiedSDK, DefaultPriceOracle } = require('./UnifiedSDK');
+const { CompoundSDK } = require('./CompoundSDK');
+const { PendleSDK, CHAINS } = require('./PendleSDK');
+
+// Build your protocol SDKs as usual
+const compound = new CompoundSDK({ chainId: 8453, rpcUrl: process.env.RPC_URL_8453 });
+const pendle = new PendleSDK({ chainId: CHAINS.base.id, rpcUrl: process.env.RPC_URL_8453 });
+
+// Aave client/markets should be created via @aave/client (see requirement doc)
+const aaveConfig = {
+    client: /* create client with @aave/client */ null, // replace with actual client
+    markets: [process.env.AAVE_MARKET_MAINNET]          // configure your market list
+};
+
+const unified = new UnifiedSDK({
+    chainId: CHAINS.base.id,
+    compound: { default: { sdk: compound, assets: ['USDC', 'USDBC', 'WETH'] } },
+    pendle: { default: { sdk: pendle, markets: ['youusd-base'] } },
+    aave: {
+        1: {
+            client: aaveConfig.client,
+            markets: aaveConfig.markets,
+            stableSymbols: ['USDC', 'USDT', 'DAI']
+        }
+    },
+    priceOracle: new DefaultPriceOracle()
+});
+
+const balances = await unified.getUserBalance({
+    protocol: 'compound',
+    accountAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e'
+});
+
+console.log('Compound USD balance:', balances.totals.usd);
+```
+
+#### 🆕 getUnifiedBalanceSummary({ chainId, accountAddress, protocols })
+Returns: `{ totals, protocols, failures }`
+
+Convenience helper that loops through the configured protocols (defaults to
+`['aave','compound','pendle']`), calls `getUserBalance` for each, and returns a
+single summary object with per-protocol results plus an aggregated USD total.
+Perfect for REST/GraphQL endpoints that need a “one call” response for a user
+account. Provide a subset in `protocols` to limit the query.
+
+The response also contains a `wallet` section with balances detected directly on
+the account (stablecoins are assumed to trade at $1, other assets priced via the
+default oracle). Configure tracked tokens per chain in
+`src/sdk/config/portfolio.js`, or override via the `portfolioTokens` option when
+instantiating `UnifiedSDK`.
 
 ## Supported Chains
 
@@ -331,7 +503,6 @@ PRIVATE_KEY=0x...
 
 # Pendle Protocol (optional - for arbitrage)
 PENDLE_MARKET_ADDRESS=0x44e2b05b2c17a12b37f11de18000922e64e23faa
-PENDLE_PT_ADDRESS=0xb04cee9901c0a8d783fe280ded66e60c13a4e296
 PENDLE_RECEIVER_ADDRESS=0x...
 ```
 
@@ -344,10 +515,10 @@ PENDLE_RECEIVER_ADDRESS=0x...
 
 #### Pendle Protocol (Base Chain)
 - **Router V4**: `0x888888888889758F76e7103c6CbF23ABbF58F946`
-- **Sample Market**: `0x44e2b05b2c17a12b37f11de18000922e64e23faa`
-- **Sample PT**: `0xb04cee9901c0a8d783fe280ded66e60c13a4e296`
+- **yoUSD-Base Market**: `0x44e2b05b2c17a12b37f11de18000922e64e23faa` (underlying `0x0000000f2eb9f69274678c76222b35eec7588a65`)
+- **USDe-Base 11 Dec 2025 Market**: `0x8991847176b1d187e403dd92a4e55fc8d7684538`
 
-*No manual configuration needed - addresses are built into the SDK.*
+PT/YT/SY addresses for the above markets are maintained in `src/sdk/config/pendle.js` and resolved automatically by the SDK.
 
 ## 📊 APY Calculation Details
 
