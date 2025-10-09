@@ -840,16 +840,9 @@ class UnifiedSDK {
                 { customSymbolSet: customStable, customAddressSet: stableAddressSet }
             );
 
-            let price = null;
-            let usdValue = null;
-            if (isStable) {
-                usdValue = amount;
-                price = 1;
-            } else if (underlyingAddress) {
-                price = this._resolvePriceOverride({ priceOverrides, symbol: underlyingSymbol, address: underlyingAddress })
-                    ?? await this.priceOracle.getUsdPrice({ chainId, address: underlyingAddress, symbol: underlyingSymbol });
-                usdValue = amount * price;
-            }
+            // PT tokens represent par value at maturity; treat amount as USD value (price = 1)
+            const price = 1;
+            const usdValue = amount;
 
             items.push({
                 protocol: 'pendle',
