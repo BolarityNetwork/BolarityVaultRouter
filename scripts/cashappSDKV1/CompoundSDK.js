@@ -9,105 +9,17 @@
  * 4. Pragmatism - Solve real problems, not theoretical ones
  */
 
-const axios = require('axios');
 const { ethers } = require('ethers');
+const { compound, common } = require('./config');
 
-// ========== CONSTANTS (No magic numbers) ==========
-
-// Compound V3 (Comet) addresses per chain - Based on official repo
-const COMPOUND_MARKETS = {
-    ethereum: {
-        // Mainnet Compound V3 USDC Market
-        comet: '0xc3d688B66703497DAA19211EEdff47f25384cdc3', // cUSDCv3 Comet
-        rewards: '0x1B0e765F6224C21223AeA2af16c1C46E38885a40', // CometRewards
-        USDC: {
-            underlying: '0xA0b86a33E6441E1A1E5c87A3dC9E1e18e8f0b456',
-            decimals: 6
-        },
-        WETH: {
-            underlying: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-            decimals: 18
-        },
-        COMP: {
-            token: '0xc00e94Cb662C3520282E6f5717214004A7f26888',
-            decimals: 18
-        }
-    },
-    base: {
-        // Base Compound V3 USDC Market - Official addresses
-        comet: '0xb125E6687d4313864e53df431d5425969c15Eb2F', // Base cUSDCv3
-        rewards: '0x123964802e6ABabBE1Bc9547D72Ef1B69B00A6b1', // Base CometRewards
-        USDC: {
-            underlying: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-            decimals: 6
-        },
-        WETH: {
-            underlying: '0x4200000000000000000000000000000000000006', // Base WETH
-            decimals: 18
-        },
-        cbETH: {
-            underlying: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', // Base cbETH
-            decimals: 18
-        },
-        cbBTC: {
-            underlying: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', // Base cbBTC
-            decimals: 8
-        },
-        wstETH: {
-            underlying: '0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452', // Base wstETH
-            decimals: 18
-        },
-        COMP: {
-            token: '0x9e1028F5F1D5eDE59748FFceE5532509976840E0',
-            decimals: 18
-        }
-    }
-};
-
-// Minimal ABIs - Based on official Compound V3 repo
-const COMPOUND_ABI = {
-    comet: [
-        // Core supply/withdraw functions
-        'function supply(address asset, uint amount)',
-        'function withdraw(address asset, uint amount)',
-
-        // Balance and state queries
-        'function balanceOf(address account) view returns (uint256)',
-        'function collateralBalanceOf(address account, address asset) view returns (uint128)',
-
-        // Rate and utilization
-        'function getSupplyRate(uint utilization) view returns (uint64)',
-        'function getBorrowRate(uint utilization) view returns (uint64)',
-        'function getUtilization() view returns (uint256)',
-
-        // Asset information
-        'function baseToken() view returns (address)',
-        'function numAssets() view returns (uint8)',
-        'function getAssetInfo(uint8 i) view returns (uint8 offset, address asset, address priceFeed, uint128 scale, uint128 borrowCollateralFactor, uint128 liquidateCollateralFactor, uint128 liquidationFactor, uint128 supplyCap)',
-
-        // Supply tracking
-        'function totalSupply() view returns (uint256)',
-        'function totalBorrow() view returns (uint256)',
-
-        // TVL calculation methods (from official example)
-        'function totalsCollateral(address asset) view returns (uint128 totalSupplyAsset, uint128 totalBorrowAsset)',
-        'function getPrice(address priceFeed) view returns (uint256)',
-        'function baseTokenPriceFeed() view returns (address)'
-    ],
-    rewards: [
-        'function claim(address comet, address src, bool shouldAccrue)',
-        'function getRewardOwed(address comet, address account) view returns (uint256, uint256)',
-        'function rewardConfig(address comet) view returns (address token, uint64 rescaleFactor, bool shouldUpscale)'
-    ],
-    erc20: [
-        'function approve(address spender, uint256 amount) returns (bool)',
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function balanceOf(address account) view returns (uint256)',
-        'function decimals() view returns (uint8)',
-        'function symbol() view returns (string)',
-        'function name() view returns (string)'
-    ]
-};
+// Shared configuration
+const {
+    COMPOUND_MARKETS,
+    COMPOUND_ABI,
+    COMPOUND_CHAIN_IDS,
+    COMPOUND_CHAIN_NAMES
+} = compound;
+const { DEFAULT_RPCS } = common;
 
 // ========== CORE DATA STRUCTURES ==========
 
@@ -242,9 +154,22 @@ class CompoundSDK {
         this._wallet = null;
 
         // Market configuration
-        this.markets = this._getMarkets(config.chainId);
-        this.comet = this.markets.comet;
-        this.rewards = this.markets.rewards;
+        this.chainConfig = this._getChainConfig(config.chainId);
+        this.markets = this.chainConfig.markets || {};
+        this.defaultMarketKey = this.chainConfig.defaultMarket || Object.keys(this.markets || {})[0];
+        if (!this.defaultMarketKey) {
+            throw new Error(`No Compound markets configured for chain ${config.chainId}`);
+        }
+        this.defaultMarket = this.markets[this.defaultMarketKey];
+        this.comet = this.defaultMarket.comet;
+        this.rewards = this.defaultMarket.rewards;
+
+        // Build asset lookup for dynamic market resolution
+        this._lookup = this._buildAssetLookup(this.markets);
+
+        // Lazy caches for contract instances per market
+        this._cometCache = {};
+        this._rewardsCache = {};
 
         // Simple logging
         this.verbose = config.verbose || false;
@@ -258,7 +183,8 @@ class CompoundSDK {
      */
     async getInterestAPR(asset) {
         try {
-            const comet = this._getCometContract();
+            const { market, assetInfo } = this._resolveAssetContext(asset);
+            const comet = this._getCometContract(market.comet);
 
             // Get current utilization rate from the contract
             const utilization = await comet.getUtilization();
@@ -270,7 +196,7 @@ class CompoundSDK {
             const secondsPerYear = 365.25 * 24 * 60 * 60;
             const apr = (Number(supplyRate) / 1e18) * secondsPerYear;
 
-            this._log(`Base APR for ${asset}: ${(apr * 100).toFixed(2)}%`);
+            this._log(`Base APR for ${assetInfo.symbol || asset}: ${(apr * 100).toFixed(2)}% on market ${market.name || market.comet}`);
             return apr;
 
         } catch (error) {
@@ -284,11 +210,11 @@ class CompoundSDK {
      */
     async getCompAPR(asset) {
         try {
-            const rewards = this._getRewardsContract();
-            const comet = this._getCometContract();
+            const { market, assetInfo } = this._resolveAssetContext(asset);
+            const rewards = this._getRewardsContract(market.rewards);
+            const comet = this._getCometContract(market.comet);
 
             // Get reward configuration for this comet
-            const rewardConfig = await rewards.rewardConfig(this.comet);
             const totalSupply = await comet.totalSupply();
 
             // For simplification, calculate based on total rewards distributed
@@ -300,7 +226,7 @@ class CompoundSDK {
             // Simplified COMP APR calculation (would need price feeds in production)
             const estimatedCompAPR = 0.01; // 1% estimate
 
-            this._log(`COMP APR for ${asset}: ${(estimatedCompAPR * 100).toFixed(2)}%`);
+            this._log(`COMP APR for ${assetInfo.symbol || asset}: ${(estimatedCompAPR * 100).toFixed(2)}% on market ${market.name || market.comet}`);
             return estimatedCompAPR;
 
         } catch (error) {
@@ -365,15 +291,20 @@ class CompoundSDK {
             const chainDisplay = chainName || this._getChainName(this.chainId);
 
             // Get market configuration for target chain
-            const marketConfig = this._getMarketConfig(targetChainId);
+            const { key: marketKey, market: marketConfig } = this._getMarketConfig(targetChainId);
 
             // Use provided comet address or default for chain
             const targetCometAddress = cometAddress || marketConfig.comet;
 
+            const baseAssetInfo = Object.values(marketConfig.assets || {}).find(asset => asset.role === 'base')
+                || Object.values(marketConfig.assets || {})[0];
+            const baseDecimals = baseAssetInfo?.decimals ?? 6;
+            const baseSymbol = baseAssetInfo?.symbol || 'BaseAsset';
+
             // Create provider and comet contract for target chain
             let provider, comet;
             if (targetChainId === this.chainId && !cometAddress) {
-                comet = this._getCometContract();
+                comet = this._getCometContract(marketConfig.comet);
             } else {
                 provider = targetChainId === this.chainId
                     ? this._getProvider()
@@ -390,23 +321,31 @@ class CompoundSDK {
 
             // Get base token price (assume USDC = $1 for simplicity)
             const basePrice = 1.0; // In production: await comet.getPrice(baseTokenPriceFeedAddr)
-            const baseTVL = Number(ethers.formatUnits(totalSupplyBase.toString(), 6)) * basePrice;
+            const baseTVL = Number(ethers.formatUnits(totalSupplyBase.toString(), baseDecimals)) * basePrice;
 
             this._log(`Base TVL: $${baseTVL.toLocaleString()}`);
 
             // Get collateral assets TVL
             let collateralTVL = 0;
             const assetBreakdown = [{
-                asset: 'USDC (Base)',
+                asset: `${baseSymbol} (${marketKey})`,
                 tvl: baseTVL,
                 isBase: true
             }];
+
+            const assetMetadata = new Map();
+            for (const info of Object.values(marketConfig.assets || {})) {
+                if (info.underlying) {
+                    assetMetadata.set(info.underlying.toLowerCase(), info);
+                }
+            }
 
             // Iterate through all collateral assets
             for (let i = 0; i < Number(numAssets); i++) {
                 try {
                     const assetInfo = await comet.getAssetInfo(i);
                     const [, asset, priceFeed, scale] = assetInfo;
+                    const assetMeta = assetMetadata.get(asset.toLowerCase());
 
                     // Get collateral totals
                     const [totalSupplyAsset] = await comet.totalsCollateral(asset);
@@ -418,7 +357,7 @@ class CompoundSDK {
 
                         collateralTVL += assetTVL;
                         assetBreakdown.push({
-                            asset: `Asset-${i}`,
+                            asset: assetMeta?.symbol || `Asset-${i}`,
                             address: asset,
                             tvl: assetTVL,
                             totalSupply: Number(totalSupplyAsset.toString()) / Number(scale.toString()),
@@ -439,6 +378,7 @@ class CompoundSDK {
             return {
                 totalTVL,
                 chain: chainDisplay,
+                market: marketKey,
                 cometAddress: targetCometAddress,
                 baseTVL,
                 collateralTVL,
@@ -464,19 +404,20 @@ class CompoundSDK {
 
         try {
             const wallet = this._getWallet();
-            const assetInfo = this._getAsset(asset);
+            const { market, assetInfo } = this._resolveAssetContext(asset);
+            const assetAddress = assetInfo.underlying;
 
             // Convert amount to wei
             const amountWei = this._toWei(amount, assetInfo.decimals);
 
             // Handle approval first - approve the comet contract
-            await this._handleApproval(wallet, assetInfo.underlying, this.comet, amountWei);
+            await this._handleApproval(wallet, assetAddress, market.comet, amountWei);
 
             // Execute supply to Compound V3
-            const comet = this._getCometContract();
-            const tx = await comet.connect(wallet).supply(assetInfo.underlying, amountWei);
+            const comet = this._getCometContract(market.comet);
+            const tx = await comet.connect(wallet).supply(assetAddress, amountWei);
 
-            this._log(`Supply transaction sent: ${tx.hash}`);
+            this._log(`Supply transaction sent: ${tx.hash} (${assetInfo.symbol || asset} on ${market.name || market.comet})`);
 
             const receipt = await tx.wait();
 
@@ -503,16 +444,17 @@ class CompoundSDK {
 
         try {
             const wallet = this._getWallet();
-            const assetInfo = this._getAsset(asset);
+            const { market, assetInfo } = this._resolveAssetContext(asset);
+            const assetAddress = assetInfo.underlying;
 
             // Convert amount to wei
             const amountWei = this._toWei(amount, assetInfo.decimals);
 
             // Execute withdraw from Compound V3
-            const comet = this._getCometContract();
-            const tx = await comet.connect(wallet).withdraw(assetInfo.underlying, amountWei);
+            const comet = this._getCometContract(market.comet);
+            const tx = await comet.connect(wallet).withdraw(assetAddress, amountWei);
 
-            this._log(`Withdraw transaction sent: ${tx.hash}`);
+            this._log(`Withdraw transaction sent: ${tx.hash} (${assetInfo.symbol || asset} on ${market.name || market.comet})`);
 
             const receipt = await tx.wait();
 
@@ -575,27 +517,27 @@ class CompoundSDK {
      */
     async getBalance(asset, userAddress) {
         try {
-            const assetInfo = this._getAsset(asset);
-            const comet = this._getCometContract();
-            const rewards = this._getRewardsContract();
+            const { market, assetInfo } = this._resolveAssetContext(asset);
+            const comet = this._getCometContract(market.comet);
+            const rewards = this._getRewardsContract(market.rewards);
 
             // Get balance and rewards from Compound V3
             const [balance, [rewardOwed]] = await Promise.all([
                 comet.balanceOf(userAddress),
-                rewards.getRewardOwed(this.comet, userAddress)
+                rewards.getRewardOwed(market.comet, userAddress)
             ]);
 
             const supplied = this._fromWei(balance.toString(), assetInfo.decimals);
 
             // Handle anomalous reward values (Base chain issue)
-            let compRewards = this._fromWei(rewardOwed.toString(), 18);
-            if (compRewards > 1e20) { // Clearly anomalous value
+           let compRewards = this._fromWei(rewardOwed.toString(), 18);
+           if (compRewards > 1e20) { // Clearly anomalous value
                 this._log(`Warning: Anomalous COMP reward value detected: ${compRewards.toExponential(2)}`);
                 compRewards = 0; // Treat as zero until resolved
             }
 
             return new CompoundBalance({
-                asset,
+                asset: assetInfo.symbol || asset,
                 supplied,
                 cTokenBalance: 0, // V3 doesn't use cTokens
                 exchangeRate: 1.0, // V3 direct balance
@@ -609,16 +551,185 @@ class CompoundSDK {
 
     // ========== INTERNAL METHODS ==========
 
-    _getMarkets(chainId) {
-        if (chainId === 1) return COMPOUND_MARKETS.ethereum;
-        if (chainId === 8453) return COMPOUND_MARKETS.base;
-        throw new Error(`Unsupported chain: ${chainId}`);
+    _getChainConfig(chainId) {
+        const chainName = COMPOUND_CHAIN_NAMES[chainId];
+        if (!chainName) {
+            throw new Error(`Unsupported chain: ${chainId}`);
+        }
+        return COMPOUND_MARKETS[chainName];
     }
 
     _getAsset(asset) {
-        const assetInfo = this.markets[asset.toUpperCase()];
-        if (!assetInfo) throw new Error(`Unsupported asset: ${asset}`);
-        return assetInfo;
+        return this._resolveAssetContext(asset).assetInfo;
+    }
+
+    _buildAssetLookup(markets) {
+        const lookup = {
+            bySymbol: {},
+            byAddress: {},
+            primaryByAddress: {}
+        };
+
+        if (!markets) return lookup;
+
+        const entries = Object.entries(markets);
+
+        const addToMap = (map, key, context) => {
+            if (!key) return;
+            const normalized = key.toLowerCase();
+            if (!map[normalized]) {
+                map[normalized] = [];
+            }
+            map[normalized].push(context);
+        };
+
+        for (const [marketKey, market] of entries) {
+            const assets = market.assets || {};
+            const assetEntries = Object.entries(assets);
+
+            let primaryContext = null;
+            const primaryAddress = market.keyAssetAddress?.toLowerCase();
+
+            for (const [symbol, info] of assetEntries) {
+                const context = {
+                    marketKey,
+                    market,
+                    assetKey: symbol,
+                    assetInfo: info,
+                    symbol: info.symbol || symbol
+                };
+
+                addToMap(lookup.bySymbol, symbol, context);
+
+                if (info.underlying) {
+                    const normalizedAddress = info.underlying.toLowerCase();
+                    addToMap(lookup.byAddress, normalizedAddress, context);
+
+                    if (!primaryContext && primaryAddress && normalizedAddress === primaryAddress) {
+                        primaryContext = context;
+                    }
+                }
+            }
+
+            if (primaryAddress) {
+                lookup.primaryByAddress[primaryAddress] = primaryContext || {
+                    marketKey,
+                    market,
+                    assetKey: marketKey,
+                    assetInfo: null,
+                    symbol: market.name || marketKey
+                };
+            }
+        }
+
+        return lookup;
+    }
+
+    _resolveAssetContext(asset) {
+        if (!asset) {
+            throw new Error('Asset identifier is required');
+        }
+
+        if (typeof asset === 'object' && asset.underlying) {
+            return {
+                market: this.defaultMarket,
+                marketKey: this.defaultMarketKey,
+                assetKey: asset.symbol || 'custom',
+                assetInfo: asset,
+                symbol: asset.symbol
+            };
+        }
+
+        if (typeof asset !== 'string') {
+            throw new Error(`Unsupported asset identifier type: ${typeof asset}`);
+        }
+
+        const trimmed = asset.trim();
+        const [rawAsset, rawMarket] = trimmed.split('@').map(part => part && part.trim());
+        const isAddressInput = rawAsset.startsWith('0x');
+        const assetKey = rawAsset.toLowerCase();
+
+        if (rawMarket) {
+            const marketKey = rawMarket.toLowerCase();
+            const market = this.markets[marketKey];
+            if (!market) {
+                throw new Error(`Unsupported market: ${rawMarket}`);
+            }
+            const assetInfo = this._getAssetFromMarket(market, assetKey);
+            if (!assetInfo) {
+                throw new Error(`Asset ${rawAsset} not found in market ${rawMarket}`);
+            }
+            return {
+                market,
+                marketKey,
+                assetKey: assetInfo.symbol || rawAsset,
+                assetInfo,
+                symbol: assetInfo.symbol || rawAsset
+            };
+        }
+
+        const { bySymbol, byAddress, primaryByAddress } = this._lookup;
+
+        if (isAddressInput) {
+            if (primaryByAddress[assetKey]) {
+                return primaryByAddress[assetKey];
+            }
+
+            const contexts = byAddress[assetKey];
+            if (!contexts || contexts.length === 0) {
+                throw new Error(`Unsupported asset address: ${asset}`);
+            }
+            if (contexts.length > 1) {
+                const baseContexts = contexts.filter(ctx => ctx.assetInfo?.role === 'base');
+                if (baseContexts.length === 1) {
+                    return baseContexts[0];
+                }
+                const defaultContext = contexts.find(ctx => ctx.marketKey === this.defaultMarketKey);
+                if (defaultContext) {
+                    return defaultContext;
+                }
+                const options = contexts.map(ctx => ctx.marketKey).join(', ');
+                throw new Error(`Asset address ${asset} exists in multiple markets (${options}). Use syntax 'asset@market'.`);
+            }
+            return contexts[0];
+        }
+
+        const symbolContexts = bySymbol[assetKey];
+        if (!symbolContexts || symbolContexts.length === 0) {
+            throw new Error(`Unsupported asset: ${asset}`);
+        }
+
+        if (symbolContexts.length > 1) {
+            const baseContexts = symbolContexts.filter(ctx => ctx.assetInfo?.role === 'base');
+            if (baseContexts.length === 1) {
+                return baseContexts[0];
+            }
+            const defaultContext = symbolContexts.find(ctx => ctx.marketKey === this.defaultMarketKey);
+            if (defaultContext) {
+                return defaultContext;
+            }
+            const options = symbolContexts.map(ctx => ctx.marketKey).join(', ');
+            throw new Error(`Asset ${asset} exists in multiple markets (${options}). Use syntax '${asset}@market'.`);
+        }
+
+        return symbolContexts[0];
+    }
+
+    _getAssetFromMarket(market, assetIdentifier) {
+        if (!market?.assets) return null;
+
+        // Try symbol match first
+        const symbolMatch = market.assets[assetIdentifier.toUpperCase()];
+        if (symbolMatch) return symbolMatch;
+
+        // Try address match
+        const lowerId = assetIdentifier.toLowerCase();
+        for (const info of Object.values(market.assets)) {
+            if (info.underlying && info.underlying.toLowerCase() === lowerId) {
+                return info;
+            }
+        }
+        return null;
     }
 
     _getProvider() {
@@ -635,12 +746,20 @@ class CompoundSDK {
         return this._wallet;
     }
 
-    _getCometContract() {
-        return new ethers.Contract(this.comet, COMPOUND_ABI.comet, this._getProvider());
+    _getCometContract(cometAddress = this.comet) {
+        const address = ethers.getAddress(cometAddress);
+        if (!this._cometCache[address]) {
+            this._cometCache[address] = new ethers.Contract(address, COMPOUND_ABI.comet, this._getProvider());
+        }
+        return this._cometCache[address];
     }
 
-    _getRewardsContract() {
-        return new ethers.Contract(this.rewards, COMPOUND_ABI.rewards, this._getProvider());
+    _getRewardsContract(rewardsAddress = this.rewards) {
+        const address = ethers.getAddress(rewardsAddress);
+        if (!this._rewardsCache[address]) {
+            this._rewardsCache[address] = new ethers.Contract(address, COMPOUND_ABI.rewards, this._getProvider());
+        }
+        return this._rewardsCache[address];
     }
 
     _getERC20Contract(address) {
@@ -682,11 +801,7 @@ class CompoundSDK {
     // ========== TVL HELPER METHODS ==========
 
     _getChainIdFromName(chainName) {
-        const chainMap = {
-            'ethereum': 1,
-            'base': 8453
-        };
-        const chainId = chainMap[chainName.toLowerCase()];
+        const chainId = COMPOUND_CHAIN_IDS[chainName.toLowerCase()];
         if (!chainId) {
             throw new Error(`Unsupported chain: ${chainName}`);
         }
@@ -694,26 +809,30 @@ class CompoundSDK {
     }
 
     _getChainName(chainId) {
-        const nameMap = {
-            1: 'ethereum',
-            8453: 'base'
-        };
-        return nameMap[chainId] || `chain-${chainId}`;
+        return COMPOUND_CHAIN_NAMES[chainId] || `chain-${chainId}`;
     }
 
-    _getMarketConfig(chainId) {
-        const config = chainId === 1 ? COMPOUND_MARKETS.ethereum : COMPOUND_MARKETS.base;
-        if (!config) {
-            throw new Error(`No market configuration for chain ${chainId}`);
+    _getMarketConfig(chainId, marketKey = null) {
+        const chainConfig = this._getChainConfig(chainId);
+        const markets = chainConfig?.markets || {};
+        const key = marketKey
+            ? marketKey.toLowerCase()
+            : (chainConfig.defaultMarket || Object.keys(markets)[0]);
+
+        const market = markets[key];
+        if (!market) {
+            throw new Error(`No market configuration for chain ${chainId} (market: ${marketKey || 'default'})`);
         }
-        return config;
+
+        return { key, market };
     }
 
     _createProviderForChain(chainId) {
-        // For simplicity, use same RPC pattern (in production, have per-chain RPCs)
-        const rpcUrl = chainId === 1
-            ? 'https://eth.llamarpc.com'
-            : 'https://1rpc.io/base';
+        // For simplicity, use shared defaults (can be overridden via config)
+        const rpcUrl = DEFAULT_RPCS[chainId];
+        if (!rpcUrl) {
+            throw new Error(`No default RPC configured for chain ${chainId}`);
+        }
         return new ethers.JsonRpcProvider(rpcUrl);
     }
 
