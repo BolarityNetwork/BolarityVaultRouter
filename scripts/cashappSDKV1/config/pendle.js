@@ -1,5 +1,6 @@
 // Pendle protocol configuration and lightweight ABI encodings
 const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
+const PENDLE_SWAP = '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D';
 const PENDLE_API_BASE = 'https://api-v2.pendle.finance';
 
 const PENDLE_CHAINS = {
@@ -79,6 +80,7 @@ function resolvePendleMarket(identifier) {
 
 module.exports = {
     PENDLE_ROUTER,
+    PENDLE_SWAP,
     PENDLE_API_BASE,
     PENDLE_CHAINS,
     ERC20_ABI,

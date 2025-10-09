@@ -19,6 +19,7 @@ Unified JavaScript/TypeScript tooling for **Pendle Protocol arbitrage**, **Compo
    - [UnifiedSDK](#unifiedsdk)
 5. [Examples & CLI](#examples--cli)
    - [TypeScript Unified Balance Script](#typescript-unified-balance-script)
+   - [TypeScript Net Transfer Script](#typescript-net-transfer-script)
    - [REST API Integration](#rest-api-integration)
 6. [Portfolio Token Scanning](#portfolio-token-scanning)
 7. [Testing & Troubleshooting](#testing--troubleshooting)
@@ -187,6 +188,7 @@ Key APIs:
 |--------|---------|-------|
 | `getUserBalance({ chainId, protocol, accountAddress, currency })` | Per-protocol totals, items, metadata | `protocol` ∈ {`aave`,`compound`,`pendle`} |
 | `getUnifiedBalanceSummary({ chainId, accountAddress, protocols, includeItems })` | Aggregated deposits + wallet balances | Includes per-protocol results and wallet scan |
+| `getNetTransfer({ chainId, accountAddress, startTime, endTime })` | USD net inflow/outflow across stable tokens | Filters exclusions, auto-selects stable tokens, supports breakdown |
 
 `getUnifiedBalanceSummary` responds with:
 ```ts
@@ -242,6 +244,33 @@ Adjust behaviour through env vars:
 | `UNIFIED_COMPOUND_ASSETS` | Override auto-discovered Comet base assets. |
 | `UNIFIED_PENDLE_MARKETS` | Restrict Pendle markets. |
 | `UNIFIED_RPC_URL` | Dedicated RPC for wallet scanning (avoid public rate limits). |
+
+### TypeScript Net Transfer Script
+
+Path: `src/sdk/examples-ts/net-transfer.ts`
+
+Calculates stablecoin net inflow/outflow for a window (default 24 h). Run with:
+
+```bash
+TS_NODE_PROJECT=tsconfig.unified.json \
+  npx ts-node src/sdk/examples-ts/net-transfer.ts
+```
+
+Useful env overrides:
+
+| Variable | Purpose |
+|----------|---------|
+| `NET_TRANSFER_CHAIN_ID` | Target chain (defaults to Base). |
+| `NET_TRANSFER_ACCOUNT` | Account to scan (falls back to `ACCOUNT_ADDRESS`/`PRIVATE_KEY`). |
+| `NET_TRANSFER_RPC_URL` | Dedicated RPC for log scanning (recommended). |
+| `NET_TRANSFER_START` / `NET_TRANSFER_END` | Explicit timestamps (seconds or ISO). |
+| `NET_TRANSFER_WINDOW_SECONDS` | Alternate duration when `START/END` omitted. |
+| `NET_TRANSFER_TOKENS` | Comma list like `USDC:0x...,USDT:0x...` to constrain tokens. |
+| `NET_TRANSFER_EXCLUDE` | Comma list of addresses excluded globally. |
+| `NET_TRANSFER_BREAKDOWN` | Set to `true` to emit per-transfer details. |
+
+Internally the script instantiates `UnifiedSDK.getNetTransfer`, so any changes to
+token configs or exclusion maps will be respected automatically.
 
 ### REST API Integration
 
@@ -356,6 +385,36 @@ the account (stablecoins are assumed to trade at $1, other assets priced via the
 default oracle). Configure tracked tokens per chain in
 `src/sdk/config/portfolio.js`, or override via the `portfolioTokens` option when
 instantiating `UnifiedSDK`.
+
+#### 🆕 getNetTransfer({ chainId, accountAddress, startTime, endTime, tokens, excludeAddresses, includeBreakdown })
+Returns: `{ netTransfer, inboundUsd, outboundUsd, breakdown }`
+
+Block-level transfer scanner for pegged stablecoins. Provides net inflow between
+`startTime` (inclusive) and `endTime` (exclusive) by iterating over ERC20
+`Transfer` logs, filtering configurable `excludeAddresses`, and auto-loading
+token metadata from `portfolio.js` + `stableTokenMap`. Defaults to the last
+24 hours when `endTime` omitted. Optional `includeBreakdown` surfaces per-token
+directional totals and individual transfer facts.
+
+Usage pattern:
+
+```javascript
+const net = await unified.getNetTransfer({
+  chainId: 8453,
+  accountAddress: '0xabc...123',
+  startTime: Math.floor(Date.now() / 1000) - 86_400,
+  excludeAddresses: {
+    global: ['0xrouter...'],
+    8453: ['0xpendleRouter...']
+  },
+  includeBreakdown: true
+});
+
+console.log(net.netTransfer, net.breakdown);
+```
+
+Tune RPC throughput using the `rpcUrls` constructor option or env-driven
+overrides described in [TypeScript Net Transfer Script](#typescript-net-transfer-script).
 
 ## Supported Chains
 

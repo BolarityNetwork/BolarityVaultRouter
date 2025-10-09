@@ -19,8 +19,8 @@ const config = {
     verbose: true
 };
 
-const DEFAULT_MARKET = '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
-const MARKET = process.env.PENDLE_MARKET_ADDRESS || DEFAULT_MARKET;
+const DEFAULT_MARKET = '0x8991847176b1d187e403dd92a4e55fc8d7684538';
+const MARKET = DEFAULT_MARKET;
 const MARKET_META = pendle.resolvePendleMarket(MARKET) || {};
 
 if (!MARKET_META.address) {
@@ -167,7 +167,7 @@ async function example4_executeSwap() {
 
     try {
         // Get quote first
-        const quote = await sdk.getQuote(UNDERLYING_TOKEN, PT_TOKEN, 1, MARKET);
+        const quote = await sdk.getQuote(CHAINS.base.usdc , PT_TOKEN, 1, MARKET);
 
         if (!quote.isprofitable) {
             console.log('⚠️  Not profitable, skipping execution');
