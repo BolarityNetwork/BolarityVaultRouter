@@ -20,6 +20,8 @@ const DEFAULT_STABLECOIN_SYMBOLS = new Set([
     'USDL', 'USX', 'USDD'
 ]);
 
+const DEFAULT_TRANSFER_EXCLUSIONS = common.DEFAULT_TRANSFER_EXCLUSIONS || {};
+
 const DEFI_LLAMA_CHAIN_IDS = {
     1: 'ethereum',
     10: 'optimism',
@@ -36,14 +38,6 @@ const ERC20_METADATA_ABI = [
     'function symbol() view returns (string)',
     'function decimals() view returns (uint8)'
 ];
-
-const DEFAULT_TRANSFER_EXCLUSIONS = {
-    global: [
-        '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D',
-        '0x888888888889758F76e7103c6CbF23ABbF58F946',
-        '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5'
-    ]
-};
 
 class DefaultPriceOracle {
     constructor(options = {}) {
