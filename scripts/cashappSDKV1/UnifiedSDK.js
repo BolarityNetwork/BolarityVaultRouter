@@ -309,28 +309,106 @@ class UnifiedSDK {
         };
     }
 
-    async getNetTransfer({
+    async getNetTransfer(options = {}) {
+        const context = await this._computeNetTransfers({ ...options, expectPrimary: true });
+        const { base, accountSummaries, accountInfo } = context;
+
+        const targetNormalized = accountInfo.primaryNormalized
+            || accountInfo.ordered[0]?.normalized;
+
+        if (!targetNormalized) {
+            throw new Error('At least one account is required');
+        }
+
+        const summary = accountSummaries.get(targetNormalized);
+        if (!summary) {
+            throw new Error('Unable to compute net transfer summary for target account');
+        }
+
+        return {
+            chainId: base.chainId,
+            account: summary.account,
+            startTime: base.startTime,
+            endTime: base.endTime,
+            inboundUsd: summary.inboundUsd,
+            outboundUsd: summary.outboundUsd,
+            netTransfer: summary.netTransfer,
+            tokensEvaluated: base.tokensEvaluated,
+            fromBlock: base.fromBlock,
+            toBlock: base.toBlock,
+            logsEvaluated: base.logsEvaluated,
+            breakdown: summary.breakdown
+        };
+    }
+
+    async getNetTransfers(options = {}) {
+        const context = await this._computeNetTransfers(options);
+        const { base, accountSummaries, accountInfo } = context;
+
+        const accounts = accountInfo.ordered.map(entry => {
+            const summary = accountSummaries.get(entry.normalized);
+            if (!summary) {
+                return {
+                    account: entry.checksum,
+                    inboundUsd: 0,
+                    outboundUsd: 0,
+                    netTransfer: 0,
+                    breakdown: undefined
+                };
+            }
+            return summary;
+        });
+
+        return {
+            chainId: base.chainId,
+            startTime: base.startTime,
+            endTime: base.endTime,
+            tokensEvaluated: base.tokensEvaluated,
+            fromBlock: base.fromBlock,
+            toBlock: base.toBlock,
+            logsEvaluated: base.logsEvaluated,
+            accounts
+        };
+    }
+
+    async _computeNetTransfers({
         chainId,
         userAddress,
         accountAddress,
+        userAddresses,
+        accountAddresses,
+        accounts,
         startTime,
         endTime,
         tokens,
         excludeAddresses,
         includeBreakdown = false,
         maxBlockSpan,
-        options = {}
+        options = {},
+        expectPrimary = false
     } = {}) {
         const resolvedChainId = chainId ?? this.defaultChainId;
         if (!resolvedChainId) {
             throw new Error('chainId is required');
         }
 
-        const account = this._resolveAccount(userAddress || accountAddress);
-        const checksumAccount = this._toChecksumAddress(account);
-        const normalizedAccount = checksumAccount ? checksumAccount.toLowerCase() : null;
-        if (!normalizedAccount) {
-            throw new Error('user address is required');
+        let primaryCandidate = userAddress || accountAddress;
+        if (expectPrimary) {
+            primaryCandidate = this._resolveAccount(primaryCandidate);
+        }
+
+        const accountInfo = this._normalizeAccountList({
+            primaryAddress: primaryCandidate,
+            fallbackDefault: this.defaultAccount,
+            userAddress,
+            accountAddress,
+            userAddresses,
+            accountAddresses,
+            accounts
+        });
+
+        if (!accountInfo.ordered.length) {
+            throw new Error('At least one account is required for net transfer analysis');
         }
 
         const startSeconds = this._normalizeTimestampInput(startTime, 'start');
@@ -362,7 +440,6 @@ class UnifiedSDK {
         }
 
         const exclusionSet = this._getTransferExclusionSet(resolvedChainId, excludeAddresses);
-
         const fromBlock = await this._findBlockByTimestamp(provider, startSeconds, { preference: 'floor' });
         const toBlock = await this._findBlockByTimestamp(provider, endSeconds, { preference: 'ceil' });
 
@@ -370,22 +447,24 @@ class UnifiedSDK {
             throw new Error('Unable to resolve block range for requested timestamps');
         }
 
-        const blockTimestampCache = new Map();
-        const breakdown = [];
+        const accountSummaries = new Map();
+        for (const entry of accountInfo.ordered) {
+            accountSummaries.set(entry.normalized, {
+                account: entry.checksum,
+                inboundUsd: 0,
+                outboundUsd: 0,
+                tokens: includeBreakdown ? new Map() : null
+            });
+        }
 
-        let inboundUsd = 0;
-        let outboundUsd = 0;
+        const accountSet = new Set(accountInfo.ordered.map(entry => entry.normalized));
+        const blockTimestampCache = new Map();
         let totalLogs = 0;
 
         for (const token of tokenConfigs) {
-            const { address, symbol, decimals } = token;
-            let tokenInbound = 0;
-            let tokenOutbound = 0;
-            const tokenDetails = [];
-
             const logs = await this._collectTransferLogs({
                 provider,
-                tokenAddress: address,
+                tokenAddress: token.address,
                 fromBlock,
                 toBlock,
                 maxBlockSpan: blockSpanLimit
@@ -404,84 +483,88 @@ class UnifiedSDK {
                 const from = this._addressFromTopic(log.topics[1]);
                 const to = this._addressFromTopic(log.topics[2]);
 
-                const normalizedFrom = from?.toLowerCase() || null;
-                const normalizedTo = to?.toLowerCase() || null;
+                const normalizedFrom = this._normalizeAddressLower(from);
+                const normalizedTo = this._normalizeAddressLower(to);
 
                 if ((normalizedFrom && exclusionSet.has(normalizedFrom))
                     || (normalizedTo && exclusionSet.has(normalizedTo))) {
                     continue;
                 }
 
-                const isInbound = normalizedTo === normalizedAccount;
-                const isOutbound = normalizedFrom === normalizedAccount;
-
-                if (!isInbound && !isOutbound) {
-                    continue;
-                }
-
-                if (isInbound && isOutbound) {
-                    // Self-transfer, ignore since it nets to zero
+                if (normalizedFrom && normalizedTo && normalizedFrom === normalizedTo) {
                     continue;
                 }
 
                 const rawAmount = this._decodeTransferAmount(log.data);
-                if (rawAmount <= 0) {
+                if (rawAmount <= 0n) {
                     continue;
                 }
 
-                const amount = Number(ethers.formatUnits(rawAmount, decimals));
+                const amount = Number(ethers.formatUnits(rawAmount, token.decimals));
                 if (!Number.isFinite(amount) || amount === 0) {
                     continue;
                 }
 
-                if (isInbound) {
-                    tokenInbound += amount;
-                } else if (isOutbound) {
-                    tokenOutbound += amount;
+                if (normalizedTo && accountSet.has(normalizedTo)) {
+                    const summary = accountSummaries.get(normalizedTo);
+                    this._applyNetTransferDelta(summary, {
+                        direction: 'in',
+                        amount,
+                        token,
+                        includeBreakdown,
+                        counterparty: from,
+                        blockNumber: log.blockNumber,
+                        transactionHash: log.transactionHash,
+                        timestamp
+                    });
                 }
 
-                if (includeBreakdown) {
-                    tokenDetails.push({
-                        direction: isInbound ? 'in' : 'out',
-                        counterparty: isInbound ? normalizedFrom : normalizedTo,
+                if (normalizedFrom && accountSet.has(normalizedFrom)) {
+                    const summary = accountSummaries.get(normalizedFrom);
+                    this._applyNetTransferDelta(summary, {
+                        direction: 'out',
                         amount,
+                        token,
+                        includeBreakdown,
+                        counterparty: to,
                         blockNumber: log.blockNumber,
                         transactionHash: log.transactionHash,
                         timestamp
                     });
                 }
             }
-
-            inboundUsd += tokenInbound;
-            outboundUsd += tokenOutbound;
-
-            if (includeBreakdown) {
-                breakdown.push({
-                    symbol,
-                    address,
-                    decimals,
-                    inboundUsd: this._roundDecimal(tokenInbound, 6),
-                    outboundUsd: this._roundDecimal(tokenOutbound, 6),
-                    transfers: tokenDetails
-                });
-            }
         }
 
-        const netTransfer = inboundUsd - outboundUsd;
+        const finalizedSummaries = new Map();
+        for (const [normalized, summary] of accountSummaries.entries()) {
+            const inboundUsd = this._roundDecimal(summary.inboundUsd, 6);
+            const outboundUsd = this._roundDecimal(summary.outboundUsd, 6);
+            const netTransfer = this._roundDecimal(inboundUsd - outboundUsd, 6);
+            const breakdown = includeBreakdown
+                ? this._finalizeNetTransferBreakdown(summary.tokens)
+                : undefined;
+
+            finalizedSummaries.set(normalized, {
+                account: summary.account,
+                inboundUsd,
+                outboundUsd,
+                netTransfer,
+                breakdown
+            });
+        }
 
         return {
-            chainId: resolvedChainId,
-            account: checksumAccount,
-            startTime: startSeconds,
-            endTime: endSeconds,
-            inboundUsd: this._roundDecimal(inboundUsd, 6),
-            outboundUsd: this._roundDecimal(outboundUsd, 6),
-            netTransfer: this._roundDecimal(netTransfer, 6),
-            tokensEvaluated: tokenConfigs.length,
-            fromBlock,
-            toBlock,
-            logsEvaluated: totalLogs,
-            breakdown: includeBreakdown ? breakdown : undefined
+            base: {
+                chainId: resolvedChainId,
+                startTime: startSeconds,
+                endTime: endSeconds,
+                tokensEvaluated: tokenConfigs.length,
+                fromBlock,
+                toBlock,
+                logsEvaluated: totalLogs
+            },
+            accountSummaries: finalizedSummaries,
+            accountInfo
         };
     }
 
@@ -588,6 +671,138 @@ class UnifiedSDK {
     _normalizeAddressLower(address) {
         const checksum = this._toChecksumAddress(address);
         return checksum ? checksum.toLowerCase() : null;
+    }
+
+    _normalizeAccountList({
+        primaryAddress,
+        fallbackDefault,
+        userAddress,
+        accountAddress,
+        userAddresses,
+        accountAddresses,
+        accounts
+    } = {}) {
+        const ordered = [];
+        const normalizedSet = new Set();
+
+        const addAddress = (value) => {
+            if (!value) return;
+            if (Array.isArray(value)) {
+                for (const entry of value) {
+                    addAddress(entry);
+                }
+                return;
+            }
+            if (typeof value === 'object' && value) {
+                if (value.address) {
+                    addAddress(value.address);
+                    return;
+                }
+                if (value.account) {
+                    addAddress(value.account);
+                    return;
+                }
+            }
+            const checksum = this._toChecksumAddress(value);
+            if (!checksum) return;
+            const normalized = checksum.toLowerCase();
+            if (!normalizedSet.has(normalized)) {
+                normalizedSet.add(normalized);
+                ordered.push({ normalized, checksum });
+            }
+        };
+
+        addAddress(primaryAddress);
+        addAddress(userAddress);
+        addAddress(accountAddress);
+        addAddress(userAddresses);
+        addAddress(accountAddresses);
+        addAddress(accounts);
+
+        if (!ordered.length && fallbackDefault) {
+            addAddress(fallbackDefault);
+        }
+
+        return {
+            ordered,
+            normalizedSet,
+            primaryNormalized: ordered[0]?.normalized || null
+        };
+    }
+
+    _applyNetTransferDelta(summary, {
+        direction,
+        amount,
+        token,
+        includeBreakdown,
+        counterparty,
+        blockNumber,
+        transactionHash,
+        timestamp
+    }) {
+        if (!summary) return;
+        if (direction === 'in') {
+            summary.inboundUsd += amount;
+        } else {
+            summary.outboundUsd += amount;
+        }
+
+        if (!includeBreakdown || !summary.tokens) {
+            return;
+        }
+
+        const key = token.address;
+        let detail = summary.tokens.get(key);
+        if (!detail) {
+            detail = {
+                symbol: token.symbol,
+                address: token.address,
+                decimals: token.decimals,
+                inboundUsd: 0,
+                outboundUsd: 0,
+                transfers: []
+            };
+            summary.tokens.set(key, detail);
+        }
+
+        if (direction === 'in') {
+            detail.inboundUsd += amount;
+        } else {
+            detail.outboundUsd += amount;
+        }
+
+        detail.transfers.push({
+            direction,
+            counterparty: counterparty ? (this._toChecksumAddress(counterparty) || counterparty) : null,
+            amount,
+            blockNumber,
+            transactionHash,
+            timestamp
+        });
+    }
+
+    _finalizeNetTransferBreakdown(tokenMap) {
+        if (!tokenMap || !(tokenMap instanceof Map)) {
+            return undefined;
+        }
+
+        const breakdown = [];
+        for (const detail of tokenMap.values()) {
+            breakdown.push({
+                symbol: detail.symbol,
+                address: detail.address,
+                decimals: detail.decimals,
+                inboundUsd: this._roundDecimal(detail.inboundUsd, 6),
+                outboundUsd: this._roundDecimal(detail.outboundUsd, 6),
+                transfers: detail.transfers.map(entry => ({
+                    ...entry,
+                    amount: this._roundDecimal(entry.amount, 6),
+                    counterparty: entry.counterparty ? (this._toChecksumAddress(entry.counterparty) || entry.counterparty) : null
+                }))
+            });
+        }
+
+        return breakdown;
     }
 
     _getTransferExclusionSet(chainId, extra) {

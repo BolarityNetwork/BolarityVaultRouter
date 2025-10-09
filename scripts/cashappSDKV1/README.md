@@ -189,6 +189,7 @@ Key APIs:
 | `getUserBalance({ chainId, protocol, accountAddress, currency })` | Per-protocol totals, items, metadata | `protocol` ∈ {`aave`,`compound`,`pendle`} |
 | `getUnifiedBalanceSummary({ chainId, accountAddress, protocols, includeItems })` | Aggregated deposits + wallet balances | Includes per-protocol results and wallet scan |
 | `getNetTransfer({ chainId, accountAddress, startTime, endTime })` | USD net inflow/outflow across stable tokens | Filters exclusions, auto-selects stable tokens, supports breakdown |
+| `getNetTransfers({ chainId, accounts, startTime, endTime })` | Batch net transfers across multiple accounts | Shared log scan for all targets to minimize RPC usage |
 
 `getUnifiedBalanceSummary` responds with:
 ```ts
@@ -262,6 +263,7 @@ Useful env overrides:
 |----------|---------|
 | `NET_TRANSFER_CHAIN_ID` | Target chain (defaults to Base). |
 | `NET_TRANSFER_ACCOUNT` | Account to scan (falls back to `ACCOUNT_ADDRESS`/`PRIVATE_KEY`). |
+| `NET_TRANSFER_ACCOUNTS` | Comma-separated list for batch mode; overrides single-account setting. |
 | `NET_TRANSFER_RPC_URL` | Dedicated RPC for log scanning (recommended). |
 | `NET_TRANSFER_START` / `NET_TRANSFER_END` | Explicit timestamps (seconds or ISO). |
 | `NET_TRANSFER_WINDOW_SECONDS` | Alternate duration when `START/END` omitted. |
@@ -415,6 +417,15 @@ console.log(net.netTransfer, net.breakdown);
 
 Tune RPC throughput using the `rpcUrls` constructor option or env-driven
 overrides described in [TypeScript Net Transfer Script](#typescript-net-transfer-script).
+
+#### 🆕 getNetTransfers({ chainId, accounts, startTime, endTime, tokens, includeBreakdown })
+Returns: `{ accounts: [...], tokensEvaluated, fromBlock, toBlock }`
+
+Accepts an array of addresses and reuses a single `getLogs` sweep per token for
+all tracked users, drastically cutting RPC calls for dashboards or cron jobs.
+Each account summary mirrors the single-account payload (`inboundUsd`,
+`outboundUsd`, `netTransfer`, optional per-token breakdown). Pass
+`excludeAddresses` or `transferExclusions` just like the single-account helper.
 
 ## Supported Chains
 

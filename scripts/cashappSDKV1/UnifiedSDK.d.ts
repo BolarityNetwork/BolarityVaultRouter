@@ -141,6 +141,9 @@ export interface NetTransferArgs {
     chainId?: number;
     userAddress?: string;
     accountAddress?: string;
+    userAddresses?: string[];
+    accountAddresses?: string[];
+    accounts?: string[];
     startTime: number | string | Date;
     endTime?: number | string | Date;
     tokens?: Array<string | { address: string; symbol?: string; decimals?: number }>
@@ -151,19 +154,33 @@ export interface NetTransferArgs {
     options?: Record<string, unknown>;
 }
 
-export interface NetTransferResult {
-    chainId: number;
+export interface NetTransferAccountSummary {
     account: string;
-    startTime: number;
-    endTime: number;
     inboundUsd: number;
     outboundUsd: number;
     netTransfer: number;
+    breakdown?: NetTransferTokenBreakdown[];
+}
+
+export interface NetTransferResult extends NetTransferAccountSummary {
+    chainId: number;
+    startTime: number;
+    endTime: number;
     tokensEvaluated: number;
     fromBlock: number;
     toBlock: number;
     logsEvaluated: number;
-    breakdown?: NetTransferTokenBreakdown[];
+}
+
+export interface NetTransferBatchResult {
+    chainId: number;
+    startTime: number;
+    endTime: number;
+    tokensEvaluated: number;
+    fromBlock: number;
+    toBlock: number;
+    logsEvaluated: number;
+    accounts: NetTransferAccountSummary[];
 }
 
 export declare class UnifiedSDK {
@@ -172,4 +189,5 @@ export declare class UnifiedSDK {
     getUserBalance(args: GetUserBalanceArgs): Promise<UnifiedBalanceResult>;
     getUnifiedBalanceSummary(args?: UnifiedBalanceSummaryArgs): Promise<UnifiedBalanceSummary>;
     getNetTransfer(args: NetTransferArgs): Promise<NetTransferResult>;
+    getNetTransfers(args: NetTransferArgs): Promise<NetTransferBatchResult>;
 }

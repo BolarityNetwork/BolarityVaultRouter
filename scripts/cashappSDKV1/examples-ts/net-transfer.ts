@@ -1,7 +1,7 @@
 #!/usr/bin/env ts-node
 import "dotenv/config";
 import { Wallet } from "ethers";
-import { UnifiedSDK, DefaultPriceOracle, NetTransferArgs, NetTransferResult } from "../UnifiedSDK";
+import { UnifiedSDK, DefaultPriceOracle, NetTransferArgs, NetTransferResult, NetTransferBatchResult } from "../UnifiedSDK";
 import { CHAINS } from "../PendleSDK";
 
 function parseList(value: string | undefined): string[] {
@@ -55,16 +55,23 @@ async function main() {
     }
 
     const privateKey = process.env.PRIVATE_KEY;
-    const accountAddress = process.env.NET_TRANSFER_ACCOUNT
+    const fallbackAccount = process.env.NET_TRANSFER_ACCOUNT
         || process.env.ACCOUNT_ADDRESS
         || (privateKey ? new Wallet(privateKey).address : undefined);
 
-    if (!accountAddress) {
-        throw new Error("Set NET_TRANSFER_ACCOUNT, ACCOUNT_ADDRESS, or PRIVATE_KEY in your .env file.");
+    const accountsFromEnv = parseList(process.env.NET_TRANSFER_ACCOUNTS);
+    const accounts = accountsFromEnv.length
+        ? accountsFromEnv
+        : (fallbackAccount ? [fallbackAccount] : []);
+
+    if (!accounts.length) {
+        throw new Error("Provide at least one account via NET_TRANSFER_ACCOUNTS, NET_TRANSFER_ACCOUNT, ACCOUNT_ADDRESS, or PRIVATE_KEY.");
     }
 
+    const primaryAccount = accounts[0];
+
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const defaultWindow = Number(process.env.NET_TRANSFER_WINDOW_SECONDS || 60);
+    const defaultWindow = Number(process.env.NET_TRANSFER_WINDOW_SECONDS || 300);
     const startTime = parseTimestamp(process.env.NET_TRANSFER_START, nowSeconds - defaultWindow);
     const endTime = parseTimestamp(process.env.NET_TRANSFER_END, nowSeconds);
 
@@ -72,7 +79,7 @@ async function main() {
 
     const sdk = new UnifiedSDK({
         chainId,
-        account: accountAddress,
+        account: primaryAccount,
         rpcUrls: { [chainId]: rpcUrl },
         priceOracle: new DefaultPriceOracle(),
         transferExclusions: parseList(process.env.NET_TRANSFER_EXCLUDE)
@@ -80,34 +87,58 @@ async function main() {
 
     const args: NetTransferArgs = {
         chainId,
-        accountAddress,
         startTime,
         endTime,
         includeBreakdown,
         tokens: parseTokenOverrides(process.env.NET_TRANSFER_TOKENS)
     };
+    const isBatch = accounts.length > 1;
 
-    const result: NetTransferResult = await sdk.getNetTransfer(args);
+    if (isBatch) {
+        args.accounts = accounts;
+        const batch: NetTransferBatchResult = await sdk.getNetTransfers(args);
+        console.log("\n=== Net Transfer Batch Summary ===");
+        console.log("Accounts:", accounts.length);
+        console.log("Chain:", batch.chainId);
+        console.log("Window:", `${new Date(batch.startTime * 1000).toISOString()} → ${new Date(batch.endTime * 1000).toISOString()}`);
+        console.log("Tokens Evaluated:", batch.tokensEvaluated);
+        console.log("Block Range:", `${batch.fromBlock} → ${batch.toBlock}`);
 
-    console.log("\n=== Net Transfer Summary ===");
-    console.log("Account:", result.account);
-    console.log("Chain:", result.chainId);
-    console.log("Window:", `${new Date(result.startTime * 1000).toISOString()} → ${new Date(result.endTime * 1000).toISOString()}`);
-    console.log("Inbound (USD):", result.inboundUsd.toFixed(6));
-    console.log("Outbound (USD):", result.outboundUsd.toFixed(6));
-    console.log("Net Transfer (USD):", result.netTransfer.toFixed(6));
-    console.log("Tokens Evaluated:", result.tokensEvaluated);
-    console.log("Block Range:", `${result.fromBlock} → ${result.toBlock}`);
+        for (const summary of batch.accounts) {
+            console.log(`\n- ${summary.account}`);
+            console.log("  Inbound (USD):", summary.inboundUsd.toFixed(6));
+            console.log("  Outbound (USD):", summary.outboundUsd.toFixed(6));
+            console.log("  Net (USD):", summary.netTransfer.toFixed(6));
+            if (includeBreakdown && summary.breakdown?.length) {
+                for (const token of summary.breakdown) {
+                    console.log(`    · ${token.symbol}: +${token.inboundUsd.toFixed(6)} / -${token.outboundUsd.toFixed(6)}`);
+                }
+            }
+        }
+    } else {
+        args.accountAddress = accounts[0];
+        const single: NetTransferResult = await sdk.getNetTransfer(args);
 
-    if (includeBreakdown && Array.isArray(result.breakdown)) {
-        console.log("\n=== Token Breakdown ===");
-        for (const token of result.breakdown) {
-            console.log(`\n${token.symbol} (${token.address})`);
-            console.log("  Inbound:", token.inboundUsd.toFixed(6));
-            console.log("  Outbound:", token.outboundUsd.toFixed(6));
-            if (token.transfers?.length) {
-                for (const transfer of token.transfers) {
-                    console.log(`    [${transfer.direction}] ${transfer.amount.toFixed(6)} @ block ${transfer.blockNumber} (${transfer.transactionHash})`);
+        console.log("\n=== Net Transfer Summary ===");
+        console.log("Account:", single.account);
+        console.log("Chain:", single.chainId);
+        console.log("Window:", `${new Date(single.startTime * 1000).toISOString()} → ${new Date(single.endTime * 1000).toISOString()}`);
+        console.log("Inbound (USD):", single.inboundUsd.toFixed(6));
+        console.log("Outbound (USD):", single.outboundUsd.toFixed(6));
+        console.log("Net Transfer (USD):", single.netTransfer.toFixed(6));
+        console.log("Tokens Evaluated:", single.tokensEvaluated);
+        console.log("Block Range:", `${single.fromBlock} → ${single.toBlock}`);
+
+        if (includeBreakdown && Array.isArray(single.breakdown)) {
+            console.log("\n=== Token Breakdown ===");
+            for (const token of single.breakdown) {
+                console.log(`\n${token.symbol} (${token.address})`);
+                console.log("  Inbound:", token.inboundUsd.toFixed(6));
+                console.log("  Outbound:", token.outboundUsd.toFixed(6));
+                if (token.transfers?.length) {
+                    for (const transfer of token.transfers) {
+                        console.log(`    [${transfer.direction}] ${transfer.amount.toFixed(6)} @ block ${transfer.blockNumber} (${transfer.transactionHash})`);
+                    }
                 }
             }
         }
