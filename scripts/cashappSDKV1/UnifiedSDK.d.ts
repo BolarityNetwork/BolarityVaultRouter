@@ -83,9 +83,16 @@ export interface UnifiedSDKInit {
     verbose?: boolean;
     extraStableSymbols?: string[];
     stableTokenMap?: Record<number, string[]>;
+    rpcUrls?: Record<number, string> | Record<string, string>;
     aave?: Record<number, unknown> & { default?: unknown } | null;
     compound?: unknown;
     pendle?: unknown;
+    transferExclusions?: Record<string, unknown> | string[] | null;
+    excludeAddresses?: Record<string, unknown> | string[] | null;
+    transferConfig?: {
+        excludeAddresses?: Record<string, unknown> | string[] | null;
+        [key: string]: unknown;
+    } | null;
 }
 
 export interface GetUserBalanceArgs {
@@ -112,9 +119,75 @@ export declare class DefaultPriceOracle implements PriceOracleLike {
     }): Promise<number>;
 }
 
+export interface NetTransferLogDetail {
+    direction: 'in' | 'out';
+    counterparty?: string | null;
+    amount: number;
+    blockNumber: number;
+    transactionHash: string;
+    timestamp: number;
+}
+
+export interface NetTransferTokenBreakdown {
+    symbol: string;
+    address: string;
+    decimals: number;
+    inboundUsd: number;
+    outboundUsd: number;
+    transfers?: NetTransferLogDetail[];
+}
+
+export interface NetTransferArgs {
+    chainId?: number;
+    userAddress?: string;
+    accountAddress?: string;
+    userAddresses?: string[];
+    accountAddresses?: string[];
+    accounts?: string[];
+    startTime: number | string | Date;
+    endTime?: number | string | Date;
+    tokens?: Array<string | { address: string; symbol?: string; decimals?: number }>
+        | Record<string, unknown>;
+    excludeAddresses?: Array<string | Record<string, unknown>> | Record<string, unknown>;
+    includeBreakdown?: boolean;
+    maxBlockSpan?: number;
+    options?: Record<string, unknown>;
+}
+
+export interface NetTransferAccountSummary {
+    account: string;
+    inboundUsd: number;
+    outboundUsd: number;
+    netTransfer: number;
+    breakdown?: NetTransferTokenBreakdown[];
+}
+
+export interface NetTransferResult extends NetTransferAccountSummary {
+    chainId: number;
+    startTime: number;
+    endTime: number;
+    tokensEvaluated: number;
+    fromBlock: number;
+    toBlock: number;
+    logsEvaluated: number;
+}
+
+export interface NetTransferBatchResult {
+    chainId: number;
+    startTime: number;
+    endTime: number;
+    tokensEvaluated: number;
+    fromBlock: number;
+    toBlock: number;
+    logsEvaluated: number;
+    accounts: NetTransferAccountSummary[];
+}
+
 export declare class UnifiedSDK {
     constructor(config?: UnifiedSDKInit);
 
     getUserBalance(args: GetUserBalanceArgs): Promise<UnifiedBalanceResult>;
     getUnifiedBalanceSummary(args?: UnifiedBalanceSummaryArgs): Promise<UnifiedBalanceSummary>;
+    getNetTransfer(args: NetTransferArgs): Promise<NetTransferResult>;
+    getNetTransfers(args: NetTransferArgs): Promise<NetTransferBatchResult>;
 }
