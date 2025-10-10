@@ -104,21 +104,6 @@ export interface GetUserBalanceArgs {
     options?: Record<string, unknown>;
 }
 
-export declare class DefaultPriceOracle implements PriceOracleLike {
-    constructor(options?: {
-        cacheTtlMs?: number;
-        httpClient?: unknown;
-        timeoutMs?: number;
-    });
-
-    getUsdPrice(args: {
-        chainId: number;
-        address?: string;
-        symbol?: string;
-        skipCache?: boolean;
-    }): Promise<number>;
-}
-
 export interface NetTransferLogDetail {
     direction: 'in' | 'out';
     counterparty?: string | null;
@@ -146,7 +131,8 @@ export interface NetTransferArgs {
     accounts?: string[];
     startTime: number | string | Date;
     endTime?: number | string | Date;
-    tokens?: Array<string | { address: string; symbol?: string; decimals?: number }>
+    tokens?:
+        | Array<string | { address: string; symbol?: string; decimals?: number }>
         | Record<string, unknown>;
     excludeAddresses?: Array<string | Record<string, unknown>> | Record<string, unknown>;
     includeBreakdown?: boolean;
@@ -158,18 +144,33 @@ export interface NetTransferAccountSummary {
     account: string;
     inboundUsd: number;
     outboundUsd: number;
-    netTransfer: number;
+    netUsd: number;
     breakdown?: NetTransferTokenBreakdown[];
 }
 
-export interface NetTransferResult extends NetTransferAccountSummary {
+export interface NetTransferSummary {
+    accounts: NetTransferAccountSummary[];
+    totals: {
+        inboundUsd: number;
+        outboundUsd: number;
+        netUsd: number;
+    };
+    metadata: Record<string, unknown>;
+}
+
+export interface NetTransferResult {
+    account: string;
     chainId: number;
     startTime: number;
     endTime: number;
+    inboundUsd: number;
+    outboundUsd: number;
+    netTransfer: number;
     tokensEvaluated: number;
     fromBlock: number;
     toBlock: number;
-    logsEvaluated: number;
+    breakdown?: NetTransferTokenBreakdown[];
+    metadata?: Record<string, unknown>;
 }
 
 export interface NetTransferBatchResult {
@@ -179,15 +180,6 @@ export interface NetTransferBatchResult {
     tokensEvaluated: number;
     fromBlock: number;
     toBlock: number;
-    logsEvaluated: number;
     accounts: NetTransferAccountSummary[];
-}
-
-export declare class UnifiedSDK {
-    constructor(config?: UnifiedSDKInit);
-
-    getUserBalance(args: GetUserBalanceArgs): Promise<UnifiedBalanceResult>;
-    getUnifiedBalanceSummary(args?: UnifiedBalanceSummaryArgs): Promise<UnifiedBalanceSummary>;
-    getNetTransfer(args: NetTransferArgs): Promise<NetTransferResult>;
-    getNetTransfers(args: NetTransferArgs): Promise<NetTransferBatchResult>;
+    metadata?: Record<string, unknown>;
 }

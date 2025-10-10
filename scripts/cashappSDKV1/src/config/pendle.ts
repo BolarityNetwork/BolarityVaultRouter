@@ -1,17 +1,17 @@
 // Pendle protocol configuration and lightweight ABI encodings
-const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
-const PENDLE_SWAP = '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D';
-const PENDLE_API_BASE = 'https://api-v2.pendle.finance';
+export const PENDLE_ROUTER = '0x888888888889758F76e7103c6CbF23ABbF58F946';
+export const PENDLE_SWAP = '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D';
+export const PENDLE_API_BASE = 'https://api-v2.pendle.finance';
 
-const PENDLE_CHAINS = {
+export const PENDLE_CHAINS = {
     ethereum: { id: 1, name: 'Ethereum', usdc: '0xA0b86a33E6441E1A1E5c87A3dC9E1e18e8f0b456' },
     bsc: { id: 56, name: 'BSC', usdc: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d' },
     polygon: { id: 137, name: 'Polygon', usdc: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' },
     base: { id: 8453, name: 'Base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
     arbitrum: { id: 42161, name: 'Arbitrum', usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' }
-};
+} as const;
 
-const ERC20_ABI = {
+export const ERC20_ABI = {
     decimals: '0x313ce567',
     allowance: '0xdd62ed3e',
     approve: '0x095ea7b3',
@@ -19,7 +19,24 @@ const ERC20_ABI = {
 };
 
 // Pendle markets we support out of the box, grouped by chain for easy lookups
-const PENDLE_MARKETS = {
+export interface PendleMarketConfig {
+    name: string;
+    address: string;
+    underlying: string;
+    sy: string;
+    pt: string;
+    yt: string;
+    maturity: string | null;
+}
+
+export interface PendleChainConfig {
+    defaultMarket: string;
+    markets: Record<string, PendleMarketConfig>;
+}
+
+export type PendleMarketRegistry = Record<string, PendleChainConfig>;
+
+export const PENDLE_MARKETS: PendleMarketRegistry = {
     base: {
         defaultMarket: 'youusd-base',
         markets: {
@@ -45,17 +62,28 @@ const PENDLE_MARKETS = {
     }
 };
 
-function buildMarketLookup(markets) {
-    const byAddress = {};
-    const byAlias = {};
+export interface PendleMarketContext extends PendleMarketConfig {
+    chain: string;
+    chainId?: number;
+    alias: string;
+}
+
+type MarketLookup = {
+    byAddress: Record<string, PendleMarketContext>;
+    byAlias: Record<string, PendleMarketContext>;
+};
+
+function buildMarketLookup(markets: PendleMarketRegistry): MarketLookup {
+    const byAddress: Record<string, PendleMarketContext> = {};
+    const byAlias: Record<string, PendleMarketContext> = {};
 
     for (const [chainKey, chainMarkets] of Object.entries(markets)) {
-        const { markets: entries = {} } = chainMarkets || {};
-        for (const [alias, meta] of Object.entries(entries)) {
+        const entries = Object.entries(chainMarkets?.markets ?? {}) as [string, PendleMarketConfig][];
+        for (const [alias, meta] of entries) {
             if (!meta?.address) continue;
-            const context = {
+            const context: PendleMarketContext = {
                 chain: chainKey,
-                chainId: PENDLE_CHAINS[chainKey]?.id,
+                chainId: PENDLE_CHAINS[chainKey as keyof typeof PENDLE_CHAINS]?.id,
                 alias,
                 ...meta
             };
@@ -68,23 +96,14 @@ function buildMarketLookup(markets) {
     return { byAddress, byAlias };
 }
 
-const PENDLE_MARKET_LOOKUP = buildMarketLookup(PENDLE_MARKETS);
+export const PENDLE_MARKET_LOOKUP = buildMarketLookup(PENDLE_MARKETS);
 
-function resolvePendleMarket(identifier) {
+export function resolvePendleMarket(identifier: string | null | undefined): PendleMarketContext | null {
     if (!identifier) return null;
     const value = identifier.toLowerCase();
-    return PENDLE_MARKET_LOOKUP.byAddress[value]
-        || PENDLE_MARKET_LOOKUP.byAlias[value]
-        || null;
+    return (
+        PENDLE_MARKET_LOOKUP.byAddress[value] ??
+        PENDLE_MARKET_LOOKUP.byAlias[value] ??
+        null
+    );
 }
-
-module.exports = {
-    PENDLE_ROUTER,
-    PENDLE_SWAP,
-    PENDLE_API_BASE,
-    PENDLE_CHAINS,
-    ERC20_ABI,
-    PENDLE_MARKETS,
-    PENDLE_MARKET_LOOKUP,
-    resolvePendleMarket
-};

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*", "examples/**/*", "bolaritySDK.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,4 +1,5 @@
-#!/usr/bin/env node
+// @ts-nocheck
+
 /**
  * Unified DeFi SDK - Cross protocol convenience helpers
  *
@@ -8,19 +9,27 @@
  * 3. Keep the surface small, grow capabilities incrementally
  */
 
-const axios = require('axios');
-const { ethers } = require('ethers');
-const { CompoundSDK } = require('./CompoundSDK');
-const { PendleSDK } = require('./PendleSDK');
-const { pendle, common, portfolio } = require('./config');
+import axios, { AxiosInstance } from 'axios';
+import {
+    Contract,
+    JsonRpcProvider,
+    formatUnits,
+    getAddress,
+    getBigInt,
+    id
+} from 'ethers';
+import { CompoundSDK } from './CompoundSDK';
+import { PendleSDK } from './PendleSDK';
+import { DEFAULT_RPCS, DEFAULT_TRANSFER_EXCLUSIONS } from '../config/common';
+import { PORTFOLIO_TOKENS } from '../config/portfolio';
 
-const DEFAULT_STABLECOIN_SYMBOLS = new Set([
+const DEFAULT_STABLECOIN_SYMBOLS = new Set<string>([
     'USDC', 'USDT', 'DAI', 'USDBC', 'USDP', 'USDS', 'PAX', 'BUSD', 'TUSD',
     'FRAX', 'LUSD', 'GUSD', 'SUSD', 'USD+', 'YOUUSD', 'PYUSD', 'USDE',
     'USDL', 'USX', 'USDD'
 ]);
 
-const DEFAULT_TRANSFER_EXCLUSIONS = common.DEFAULT_TRANSFER_EXCLUSIONS || {};
+const TRANSFER_EXCLUSIONS_BASE = DEFAULT_TRANSFER_EXCLUSIONS || {};
 
 const DEFI_LLAMA_CHAIN_IDS = {
     1: 'ethereum',
@@ -33,20 +42,34 @@ const DEFI_LLAMA_CHAIN_IDS = {
     59144: 'linea'
 };
 
-const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+const ERC20_TRANSFER_TOPIC = id('Transfer(address,address,uint256)');
 const ERC20_METADATA_ABI = [
     'function symbol() view returns (string)',
     'function decimals() view returns (uint8)'
 ];
 
-class DefaultPriceOracle {
-    constructor(options = {}) {
+export class DefaultPriceOracle {
+    cacheTtlMs: number;
+    http: AxiosInstance;
+    cache: Map<string, { value: number; timestamp: number }>;
+
+    constructor(options: any = {}) {
         this.cacheTtlMs = options.cacheTtlMs ?? 60_000;
         this.http = options.httpClient || axios.create({ timeout: options.timeoutMs ?? 10_000 });
         this.cache = new Map();
     }
 
-    async getUsdPrice({ chainId, address, symbol, skipCache = false }) {
+    async getUsdPrice({
+        chainId,
+        address,
+        symbol,
+        skipCache = false
+    }: {
+        chainId: number;
+        address: string;
+        symbol?: string;
+        skipCache?: boolean;
+    }) {
         if (!chainId) {
             throw new Error('chainId is required for price lookup');
         }
@@ -87,8 +110,20 @@ class DefaultPriceOracle {
     }
 }
 
-class UnifiedSDK {
-    constructor(config = {}) {
+export class UnifiedSDK {
+    defaultChainId: number | null;
+    defaultAccount: string | null;
+    priceOracle: any;
+    verbose: boolean;
+    protocols: any;
+    portfolioTokens: Record<string, any>;
+    rpcUrls: Record<number | string, string>;
+    private _providerCache: Map<number, JsonRpcProvider>;
+    globalStableSymbols: Set<string>;
+    globalStableAddresses: Map<number, Set<string>>;
+    transferExclusions: any;
+
+    constructor(config: any = {}) {
         this.defaultChainId = config.chainId ?? null;
         this.defaultAccount = config.account ?? null;
         this.priceOracle = config.priceOracle || new DefaultPriceOracle(config.priceConfig);
@@ -100,8 +135,8 @@ class UnifiedSDK {
             pendle: config.pendle || null
         };
 
-        this.portfolioTokens = config.portfolioTokens || portfolio.PORTFOLIO_TOKENS || {};
-        this.rpcUrls = { ...(common.DEFAULT_RPCS || {}), ...(config.rpcUrls || {}) };
+        this.portfolioTokens = config.portfolioTokens || PORTFOLIO_TOKENS || {};
+        this.rpcUrls = { ...DEFAULT_RPCS, ...(config.rpcUrls || {}) };
         this._providerCache = new Map();
 
         this.globalStableSymbols = new Set(DEFAULT_STABLECOIN_SYMBOLS);
@@ -142,7 +177,7 @@ class UnifiedSDK {
         }
 
         this.transferExclusions = this._normalizeTransferExclusions([
-            DEFAULT_TRANSFER_EXCLUSIONS,
+            TRANSFER_EXCLUSIONS_BASE,
             config.transferExclusions,
             config.excludeAddresses,
             config.exclude_addresses,
@@ -500,7 +535,7 @@ class UnifiedSDK {
                     continue;
                 }
 
-                const amount = Number(ethers.formatUnits(rawAmount, token.decimals));
+                const amount = Number(formatUnits(rawAmount, token.decimals));
                 if (!Number.isFinite(amount) || amount === 0) {
                     continue;
                 }
@@ -633,7 +668,7 @@ class UnifiedSDK {
             return 0n;
         }
         try {
-            return ethers.getBigInt(data);
+            return getBigInt(data);
         } catch (error) {
             if (this.verbose) {
                 console.warn('⚠️  Failed to decode transfer amount:', error?.message || error);
@@ -648,7 +683,7 @@ class UnifiedSDK {
         }
         const value = `0x${topic.slice(-40)}`;
         try {
-            return ethers.getAddress(value);
+            return getAddress(value);
         } catch (error) {
             return value.toLowerCase();
         }
@@ -659,7 +694,7 @@ class UnifiedSDK {
             return null;
         }
         try {
-            return ethers.getAddress(address);
+            return getAddress(address);
         } catch (error) {
             if (typeof address === 'string' && address.startsWith('0x') && address.length === 42) {
                 return address;
@@ -944,7 +979,7 @@ class UnifiedSDK {
             };
         }
 
-        const contract = new ethers.Contract(address, ERC20_METADATA_ABI, provider);
+        const contract = new Contract(address, ERC20_METADATA_ABI, provider);
 
         if (decimals == null) {
             try {
@@ -1218,7 +1253,7 @@ class UnifiedSDK {
             if (!token.address) {
                 throw new Error(`Token ${symbol || 'unknown'} missing address`);
             }
-            const contract = new ethers.Contract(token.address, [
+            const contract = new Contract(token.address, [
                 'function balanceOf(address) view returns (uint256)',
                 'function decimals() view returns (uint8)'
             ], provider);
@@ -1235,7 +1270,7 @@ class UnifiedSDK {
 
         if (balanceRaw == null) return null;
 
-        const amount = Number(ethers.formatUnits(balanceRaw, decimals ?? 18));
+        const amount = Number(formatUnits(balanceRaw, decimals ?? 18));
         if (!amount) return null;
 
         let price = treatAsStable ? 1 : null;
@@ -1278,7 +1313,7 @@ class UnifiedSDK {
         if (!rpcUrl) {
             return null;
         }
-        const provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
+        const provider = new JsonRpcProvider(rpcUrl, chainId);
         this._providerCache.set(chainId, provider);
         return provider;
     }
@@ -1289,7 +1324,7 @@ class UnifiedSDK {
             throw new Error(`Aave configuration not provided for chain ${chainId}`);
         }
 
-        const { markets, client, stableSymbols = [], stableAddresses = [], priceOverrides = {} } = config;
+        const { markets = [], client, stableSymbols = [], stableAddresses = [], priceOverrides = {} } = config;
         if (!client) {
             throw new Error('Aave client instance is required');
         }
@@ -1306,257 +1341,136 @@ class UnifiedSDK {
         }
 
         const user = evmAddress(account);
+        const chainIdentifier = asChainId(chainId);
+
         const customStable = new Set(stableSymbols.map(symbol => symbol.toUpperCase()));
         const stableAddressSet = new Set(stableAddresses.map(addr => addr.toLowerCase()));
-        const normalizedMarkets = markets.map(address => address.toLowerCase());
-        const targetMarkets = new Set(normalizedMarkets);
 
-        const items = [];
-        let usedMarketsAction = false;
-
-        if (fetchMarkets && typeof fetchMarkets === 'function' && typeof asChainId === 'function') {
+        const marketMeta = new Map<string, any>();
+        if (fetchMarkets && typeof fetchMarkets === 'function') {
             try {
                 const marketResult = await fetchMarkets(client, {
-                    chainIds: [asChainId(chainId)],
+                    chainIds: [chainIdentifier],
                     user
                 });
 
-                if (marketResult && typeof marketResult.isErr === 'function' && typeof marketResult.isOk === 'function') {
-                    if (marketResult.isErr()) {
-                        if (this.verbose) {
-                            console.warn('Aave markets action error, falling back to userSupplies:', marketResult.error);
-                        }
-                    } else {
-                        const marketsData = Array.isArray(marketResult.value) ? marketResult.value : [];
-
-                        let supplyMap = new Map();
-                        if (userSupplies && typeof userSupplies === 'function') {
-                            try {
-                                const supplyRequestMarkets = marketsData
-                                    .map(info => info?.address)
-                                    .filter(Boolean)
-                                    .map(address => ({
-                                        chainId: asChainId(chainId),
-                                        address: evmAddress(address)
-                                    }));
-
-                                if (supplyRequestMarkets.length) {
-                                    const suppliesResult = await userSupplies(client, {
-                                        markets: supplyRequestMarkets,
-                                        user
-                                    });
-
-                                    if (suppliesResult && typeof suppliesResult.isOk === 'function' && suppliesResult.isOk()) {
-                                        const positions = Array.isArray(suppliesResult.value) ? suppliesResult.value : [];
-                                        for (const position of positions) {
-                                            const marketAddress = position?.market?.address?.toLowerCase();
-                                            const tokenAddress = position?.currency?.address?.toLowerCase();
-                                            if (!marketAddress || !tokenAddress) continue;
-
-                                            const amount = this._extractNumeric(
-                                                position?.balance?.amount
-                                                ?? position?.balance
-                                            );
-                                            const usd = this._extractNumeric(position?.balance?.usd);
-
-                                            supplyMap.set(`${marketAddress}:${tokenAddress}`, {
-                                                amount,
-                                                usd
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch (error) {
-                                if (this.verbose) {
-                                    console.warn('Aave userSupplies enrichment failed:', error?.message || error);
-                                }
-                            }
-                        }
-
-                        for (const marketInfo of marketsData) {
-                            const marketAddress = (marketInfo?.address || marketInfo?.marketAddress || '').toLowerCase();
-                            if (targetMarkets.size && !targetMarkets.has(marketAddress)) {
-                                continue;
-                            }
-
-                            const reserves = Array.isArray(marketInfo?.supplyReserves) ? marketInfo.supplyReserves : [];
-                            for (const reserve of reserves) {
-                                const userState = reserve?.userState || {};
-                                let amount = this._extractNumeric(
-                                    userState?.supplyBalance?.amount
-                                    ?? userState?.supplyBalance
-                                    ?? userState?.balance?.amount
-                                    ?? userState?.balance
-                                    ?? userState?.principalBalance?.amount
-                                    ?? userState?.principalBalance
-                                );
-
-                                const reserveAddress = (reserve?.underlyingToken?.address || reserve?.market?.underlyingTokenAddress || '').toLowerCase();
-                                const symbol = (reserve?.underlyingToken?.symbol || reserve?.market?.symbol || reserve?.symbol || '').toUpperCase();
-                                const decimals = reserve?.underlyingToken?.decimals
-                                    ?? reserve?.decimals
-                                    ?? null;
-
-                                const usdCandidate = this._extractNumeric(
-                                    userState?.supplyBalance?.usd
-                                    ?? userState?.usdValue
-                                    ?? userState?.balanceUsd
-                                    ?? userState?.balanceUSD
-                                    ?? userState?.supplyBalanceUsd
-                                );
-
-                                const supplyEntry = reserveAddress && supplyMap.size
-                                    ? supplyMap.get(`${marketAddress}:${reserveAddress}`)
-                                    : undefined;
-
-                                if (supplyEntry && supplyEntry.amount) {
-                                    amount = supplyEntry.amount;
-                                }
-
-                                if (!amount) {
-                                    continue;
-                                }
-
-                                const isStable = this._isStableAsset(
-                                    { symbol, address: reserveAddress, chainId },
-                                    { customSymbolSet: customStable, customAddressSet: stableAddressSet }
-                                );
-
-                                let price = null;
-                                let usdValue = usdCandidate;
-                                if (supplyEntry && supplyEntry.usd) {
-                                    usdValue = supplyEntry.usd;
-                                }
-
-                                if (isStable) {
-                                    price = 1;
-                                    usdValue = amount;
-                                } else {
-                                    if (!usdValue) {
-                                        if (reserveAddress) {
-                                            price = this._resolvePriceOverride({ priceOverrides, symbol, address: reserveAddress })
-                                                ?? await this.priceOracle.getUsdPrice({ chainId, address: reserveAddress, symbol });
-                                            usdValue = amount * price;
-                                        }
-                                    } else {
-                                        price = usdValue / amount;
-                                    }
-
-                                    if (price == null && usdValue) {
-                                        price = usdValue / amount;
-                                    }
-                                }
-
-                                items.push({
-                                    protocol: 'aave',
-                                    market: marketInfo?.address || marketInfo?.marketAddress || null,
-                                    symbol,
-                                    address: reserveAddress,
-                                    amount,
-                                    usdValue,
-                                    decimals,
-                                    price,
-                                    isStable,
-                                    raw: {
-                                        marketName: marketInfo?.name,
-                                        reserve
-                                    }
-                                });
-                            }
-                        }
-
-                        if (items.length) {
-                            usedMarketsAction = true;
-                        }
+                if (marketResult && typeof marketResult.isOk === 'function' && marketResult.isOk()) {
+                    const marketsData = Array.isArray(marketResult.value) ? marketResult.value : [];
+                    for (const info of marketsData) {
+                        const address = (info?.address || info?.marketAddress || '').toLowerCase();
+                        if (!address) continue;
+                        marketMeta.set(address, info);
                     }
                 }
             } catch (error) {
                 if (this.verbose) {
-                    console.warn('Aave markets action threw, falling back to userSupplies:', error?.message || error);
+                    console.warn('Aave markets metadata fetch failed:', error?.message || error);
                 }
             }
         }
 
-        if (!usedMarketsAction) {
-            const result = await userSupplies(client, { markets, user });
+        const normalizedMarkets = new Set(markets.map(address => (address || "").toLowerCase()).filter(Boolean));
 
-            let positions = [];
-            if (result && typeof result.isErr === 'function' && typeof result.isOk === 'function') {
-                if (result.isErr()) {
-                    const reason = result.error?.message || result.error || 'unknown error';
-                    throw new Error(`Aave userSupplies error: ${reason}`);
-                }
-                positions = Array.isArray(result.value) ? result.value : [];
-            } else if (Array.isArray(result?.value)) {
-                positions = result.value;
-            } else if (Array.isArray(result)) {
-                positions = result;
+        const supplyRequestMarkets = markets
+            .map(address => address && evmAddress(address))
+            .filter(Boolean)
+            .map(address => ({ chainId: chainIdentifier, address }));
+
+        const positions: any[] = [];
+        try {
+            const suppliesResult = await userSupplies(client, {
+                markets: supplyRequestMarkets,
+                user
+            });
+
+            if (suppliesResult && typeof suppliesResult.isErr === 'function' && suppliesResult.isErr()) {
+                const reason = suppliesResult.error?.message || suppliesResult.error || 'unknown error';
+                throw new Error(`Aave userSupplies error: ${reason}`);
             }
 
-            for (const position of positions) {
-                const reserve = position.reserve || position.underlyingReserve || {};
-                const symbol = (reserve.symbol || reserve.ticker || position.symbol || '').toUpperCase();
-                const address = (reserve.address || reserve.underlyingAsset || reserve.underlyingAddress || '').toLowerCase();
-                const decimals = reserve.decimals ?? position.decimals ?? null;
+            if (Array.isArray(suppliesResult?.value)) {
+                positions.push(...suppliesResult.value);
+            } else if (Array.isArray(suppliesResult)) {
+                positions.push(...suppliesResult);
+            }
+        } catch (error) {
+            throw new Error(`Aave userSupplies error: ${error.message || error}`);
+        }
 
-                const amount = this._extractNumeric(
-                    position?.supplyBalance
-                    ?? position?.underlyingBalance
-                    ?? position?.balance
-                    ?? position?.supplyBalance
-                    ?? reserve?.aTokenBalance
-                    ?? position
-                );
+        const items = [];
 
-                if (!amount) {
-                    continue;
-                }
+        for (const position of positions) {
+            const marketAddress = (position?.market?.address || position?.marketAddress || '').toLowerCase();
+            if (!marketAddress) continue;
+            if (normalizedMarkets.size && !normalizedMarkets.has(marketAddress)) continue;
 
-                const usdCandidate = this._extractNumeric(
-                    position?.balanceUsd
-                    ?? position?.balanceUSD
-                    ?? position?.underlyingBalanceUSD
-                    ?? position?.valueUsd
-                    ?? position?.valueUSD
-                    ?? reserve?.balanceUSD
-                    ?? reserve?.balanceUsd
-                );
+            const reserve = position?.currency || position?.reserve || position?.underlyingReserve || {};
+            const address = (reserve?.address || reserve?.underlyingAsset || '').toLowerCase();
 
-                const isStable = this._isStableAsset({ symbol, address, chainId }, { customSymbolSet: customStable, customAddressSet: stableAddressSet });
+            const symbolRaw = reserve?.symbol || position?.symbol || position?.reserve?.symbol;
+            const symbol = symbolRaw ? symbolRaw.toUpperCase() : address || 'UNKNOWN';
+            const decimals = reserve?.decimals ?? position?.decimals ?? null;
 
-                let price = null;
-                let usdValue = usdCandidate;
+            const amount = this._extractNumeric(
+                position?.balance?.amount
+                ?? position?.balance
+                ?? position?.supplyBalance
+                ?? position?.underlyingBalance
+                ?? position?.principalBalance
+                ?? position?.aTokenBalance
+            );
 
-                if (isStable) {
-                    price = 1;
-                    usdValue = amount;
+            if (!amount) {
+                continue;
+            }
+
+            const usdCandidate = this._extractNumeric(
+                position?.balance?.usd
+                ?? position?.balanceUsd
+                ?? position?.balanceUSD
+                ?? position?.underlyingBalanceUSD
+                ?? position?.valueUsd
+                ?? position?.valueUSD
+            );
+
+            const isStable = this._isStableAsset(
+                { symbol, address, chainId },
+                { customSymbolSet: customStable, customAddressSet: stableAddressSet }
+            );
+
+            let price = null;
+            let usdValue = usdCandidate;
+
+            if (isStable) {
+                price = 1;
+                usdValue = amount;
+            } else {
+                if (!usdValue) {
+                    price = this._resolvePriceOverride({ priceOverrides, symbol, address })
+                        ?? await this.priceOracle.getUsdPrice({ chainId, address, symbol });
+                    usdValue = amount * price;
                 } else {
-                    if (!usdValue) {
-                        price = this._resolvePriceOverride({ priceOverrides, symbol, address })
-                            ?? await this.priceOracle.getUsdPrice({ chainId, address, symbol });
-                        usdValue = amount * price;
-                    } else {
-                        price = usdValue / amount;
-                    }
+                    price = usdValue / amount;
                 }
-
-                items.push({
-                    protocol: 'aave',
-                    market: position.market?.address || position.marketAddress || reserve.market || null,
-                    symbol,
-                    address,
-                    amount,
-                    usdValue,
-                    decimals,
-                    price,
-                    isStable,
-                    raw: {
-                        aToken: reserve.aTokenAddress || reserve.aToken,
-                        reserveAddress: address,
-                        market: position.market?.address || position.marketAddress || reserve.market || null
-                    }
-                });
             }
+
+            const meta = marketMeta.get(marketAddress) || {};
+
+            items.push({
+                protocol: 'aave',
+                market: marketAddress || meta?.address || null,
+                symbol,
+                address,
+                amount,
+                usdValue,
+                decimals,
+                price,
+                isStable,
+                raw: {
+                    market: meta,
+                    position
+                }
+            });
         }
 
         return {
@@ -1612,7 +1526,7 @@ class UnifiedSDK {
             try {
                 const comet = sdk._getCometContract(market.comet);
                 const balanceRaw = await comet.balanceOf(account);
-                amount = Number(ethers.formatUnits(balanceRaw, decimals));
+                amount = Number(formatUnits(balanceRaw, decimals));
             } catch (error) {
                 if (this.verbose) {
                     console.warn(`Compound comet balance failed for market ${marketKey}:`, error?.message || error);
@@ -1833,7 +1747,4 @@ class UnifiedSDK {
     }
 }
 
-module.exports = {
-    UnifiedSDK,
-    DefaultPriceOracle
-};
+export { UnifiedSDK, DefaultPriceOracle };

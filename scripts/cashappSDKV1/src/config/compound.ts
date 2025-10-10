@@ -1,5 +1,29 @@
 // Compound V3 (Comet) configuration and ABIs
-const COMPOUND_MARKETS = {
+export type CompoundAssetRole = 'base' | 'collateral' | 'reward' | string;
+
+export interface CompoundAssetConfig {
+    symbol: string;
+    underlying: string;
+    decimals: number;
+    role?: CompoundAssetRole;
+}
+
+export interface CompoundMarketConfig {
+    name?: string;
+    keyAssetAddress?: string;
+    comet: string;
+    rewards: string;
+    assets: Record<string, CompoundAssetConfig>;
+}
+
+export interface CompoundChainConfig {
+    defaultMarket: string;
+    markets: Record<string, CompoundMarketConfig>;
+}
+
+export type CompoundMarketRegistry = Record<string, CompoundChainConfig>;
+
+export const COMPOUND_MARKETS: CompoundMarketRegistry = {
     ethereum: {
         defaultMarket: 'usdc',
         markets: {
@@ -158,7 +182,7 @@ const COMPOUND_MARKETS = {
     }
 };
 
-const COMPOUND_ABI = {
+export const COMPOUND_ABI = {
     comet: [
         'function supply(address asset, uint amount)',
         'function withdraw(address asset, uint amount)',
@@ -191,18 +215,11 @@ const COMPOUND_ABI = {
     ]
 };
 
-const COMPOUND_CHAIN_IDS = {
+export const COMPOUND_CHAIN_IDS = {
     ethereum: 1,
     base: 8453
 };
 
-const COMPOUND_CHAIN_NAMES = Object.fromEntries(
+export const COMPOUND_CHAIN_NAMES = Object.fromEntries(
     Object.entries(COMPOUND_CHAIN_IDS).map(([name, id]) => [id, name])
-);
-
-module.exports = {
-    COMPOUND_MARKETS,
-    COMPOUND_ABI,
-    COMPOUND_CHAIN_IDS,
-    COMPOUND_CHAIN_NAMES
-};
+) as Record<number | string, string>;

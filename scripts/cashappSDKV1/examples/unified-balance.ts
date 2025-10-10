@@ -1,13 +1,17 @@
-#!/usr/bin/env ts-node
-/// <reference path="./types.d.ts" />
-import "dotenv/config";
-import { Wallet } from "ethers";
-import { markets as fetchAaveMarkets } from "@aave/client/actions";
-import { chainId as toAaveChainId, evmAddress } from "@aave/client";
-import { DefaultPriceOracle, UnifiedSDK } from "../UnifiedSDK";
-import { CompoundSDK } from "../CompoundSDK";
-import { PendleSDK, CHAINS } from "../PendleSDK";
-import { buildAaveClient } from "../aave/client";
+import 'dotenv/config';
+import { Wallet } from 'ethers';
+import { markets as fetchAaveMarkets, userSupplies as fetchUserSupplies } from '@aave/client/actions';
+import { chainId as toAaveChainId, evmAddress } from '@aave/client';
+import {
+    DefaultPriceOracle,
+    UnifiedSDK,
+    CompoundSDK,
+    PendleSDK,
+    CHAINS,
+    buildAaveClient,
+    commonConfig
+} from '../bolaritySDK';
+import type { CompoundSDKConfig } from '../bolaritySDK';
 
 function parseList(value: string | undefined): string[] {
     return (value || "")
@@ -30,7 +34,8 @@ function parseSymbolMap(value: string | undefined): Record<string, string> {
 async function main() {
     const defaultChainId = CHAINS.base.id;
     const chainId = Number(process.env.BALANCE_CHAIN_ID || process.env.UNIFIED_CHAIN_ID || defaultChainId);
-    const rpcUrl = process.env.UNIFIED_RPC_URL || process.env.RPC_URL_8453 || process.env.RPC_URL;
+    const fallbackRpc = commonConfig.DEFAULT_RPCS?.[chainId];
+    const rpcUrl = process.env.UNIFIED_RPC_URL || process.env.RPC_URL_8453 || process.env.RPC_URL || fallbackRpc;
 
     if (!rpcUrl) {
         throw new Error("RPC URL is required. Set UNIFIED_RPC_URL or RPC_URL_8453 in your .env file.");
@@ -43,16 +48,13 @@ async function main() {
         throw new Error("Set ACCOUNT_ADDRESS or PRIVATE_KEY in your .env file to derive the user account.");
     }
 
-    const compoundConfig: Record<string, unknown> = {
+    const compoundConfig: CompoundSDKConfig = {
         chainId,
         rpcUrl,
         slippage: 0.005,
-        verbose: true
+        verbose: true,
+        ...(privateKey ? { privateKey } : {})
     };
-
-    if (privateKey) {
-        compoundConfig.privateKey = privateKey;
-    }
 
     const compound = new CompoundSDK(compoundConfig);
 
@@ -123,12 +125,12 @@ async function main() {
             aaveStableSymbols = discovered.stableSymbols;
         }
 
-        if (!aaveStableAddresses.length && discovered.stableAddresses.length) {
-            aaveStableAddresses = discovered.stableAddresses;
-        }
-    } catch (error) {
-        console.warn("⚠️  Unable to auto-discover Aave markets:", (error as Error).message);
+    if (!aaveStableAddresses.length && discovered.stableAddresses.length) {
+        aaveStableAddresses = discovered.stableAddresses;
     }
+} catch (error) {
+    console.warn("⚠️  Unable to auto-discover Aave markets:", (error as Error).message);
+}
 
     const unified = new UnifiedSDK({
         chainId,
@@ -171,7 +173,7 @@ async function main() {
 
     console.log(`\n🔍 Unified balance lookup for ${accountAddress} on chain ${chainId}`);
 
-    const summary = await unified.getUnifiedBalanceSummary({
+    const summary = await (unified as any).getUnifiedBalanceSummary({
         chainId,
         accountAddress,
         protocols,
@@ -277,66 +279,64 @@ async function discoverAaveMarkets({ client, chainId, account }: DiscoverAavePar
 
         const list = Array.isArray(result.value) ? result.value : [];
 
+        const candidateAddresses: string[] = [];
         for (const market of list) {
-            const address = typeof market?.address === "string" ? market.address : undefined;
-            if (!address) continue;
-
-            const reserves = Array.isArray(market?.supplyReserves) ? market.supplyReserves : [];
-            const hasExposure = reserves.some((reserve) => {
-                const reserveState = reserve?.userState as Record<string, unknown> | undefined;
-                const amount = extractNumber(
-                    reserveState?.["balance"]
-                    ?? reserveState?.["supplyBalance"]
-                    ?? reserveState?.["aTokenBalance"]
-                    ?? reserveState?.["walletBalance"]
-                );
-                return amount > 0;
-            });
-
-            if (!hasExposure) {
-                continue;
+            if (typeof market?.address === 'string') {
+                candidateAddresses.push(market.address);
             }
+        }
 
-            marketsSet.add(address);
+        if (candidateAddresses.length === 0) {
+            return {
+                markets: [],
+                stableSymbols: Array.from(stableSymbolSet),
+                stableAddresses: Array.from(stableAddressSet)
+            };
+        }
 
-            for (const reserve of reserves) {
-                const reserveState = reserve?.userState as Record<string, unknown> | undefined;
-                const symbol = typeof reserve?.underlyingToken?.symbol === "string"
-                    ? reserve.underlyingToken.symbol.toUpperCase()
-                    : undefined;
-                const reserveAddress = typeof reserve?.underlyingToken?.address === "string"
-                    ? reserve.underlyingToken.address.toLowerCase()
-                    : undefined;
+        const suppliesResult = await fetchUserSupplies(client, {
+            markets: candidateAddresses.map((address) => ({
+                chainId: chainIdentifier,
+                address: evmAddress(address)
+            })),
+            user: evmAddress(account)
+        });
 
-                if (symbol && /(USDC|USDT|USDBC|USDbC|USDE|USDS|USDP|USDX|USDC\.e|DAI|FRAX|LUSD|PYUSD|USD)/i.test(symbol)) {
-                    stableSymbolSet.add(symbol);
-                    if (reserveAddress) {
-                        stableAddressSet.add(reserveAddress);
-                    }
-                }
+        if (suppliesResult.isErr()) {
+            throw suppliesResult.error;
+        }
 
-                const amount = extractNumber(
-                    reserveState?.["balance"]
-                    ?? reserveState?.["supplyBalance"]
-                    ?? reserveState?.["aTokenBalance"]
-                    ?? reserveState?.["walletBalance"]
-                );
+        const positions = Array.isArray(suppliesResult.value) ? suppliesResult.value as any[] : [];
 
-                if (!amount) {
-                    continue;
-                }
+        for (const rawPosition of positions) {
+            const position: any = rawPosition;
+            const marketAddress = typeof position?.market?.address === 'string'
+                ? position.market.address
+                : undefined;
+            if (!marketAddress) continue;
 
-                const usdValue = extractNumber(
-                    reserveState?.["usdValue"]
-                    ?? reserveState?.["balanceUsd"]
-                    ?? reserveState?.["balanceUSD"]
-                    ?? reserveState?.["supplyBalanceUsd"]
-                );
+            const currency = position?.currency || position?.reserve || {};
+            const symbol = typeof currency?.symbol === 'string' ? currency.symbol.toUpperCase() : undefined;
+            const reserveAddress = typeof currency?.address === 'string' ? currency.address.toLowerCase() : undefined;
 
-                if (usdValue > 0 && symbol && reserveAddress) {
-                    stableSymbolSet.add(symbol);
-                    stableAddressSet.add(reserveAddress);
-                }
+            const amount = extractNumber(
+                position?.balance?.amount
+                ?? position?.balance
+                ?? position?.supplyBalance
+                ?? position?.underlyingBalance
+                ?? position?.principalBalance
+                ?? position?.aTokenBalance
+            );
+
+            if (!amount) continue;
+
+            marketsSet.add(marketAddress);
+
+            if (symbol) {
+                stableSymbolSet.add(symbol);
+            }
+            if (reserveAddress) {
+                stableAddressSet.add(reserveAddress);
             }
         }
     } catch (error) {

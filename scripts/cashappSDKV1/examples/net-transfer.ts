@@ -1,8 +1,13 @@
-#!/usr/bin/env ts-node
-import "dotenv/config";
-import { Wallet } from "ethers";
-import { UnifiedSDK, DefaultPriceOracle, NetTransferArgs, NetTransferResult, NetTransferBatchResult } from "../UnifiedSDK";
-import { CHAINS } from "../PendleSDK";
+import 'dotenv/config';
+import { Wallet } from 'ethers';
+import {
+    UnifiedSDK,
+    DefaultPriceOracle,
+    NetTransferArgs,
+    NetTransferResult,
+    NetTransferBatchResult,
+    CHAINS
+} from '../bolaritySDK';
 
 function parseList(value: string | undefined): string[] {
     return (value || "")
@@ -108,7 +113,8 @@ async function main() {
             console.log(`\n- ${summary.account}`);
             console.log("  Inbound (USD):", summary.inboundUsd.toFixed(6));
             console.log("  Outbound (USD):", summary.outboundUsd.toFixed(6));
-            console.log("  Net (USD):", summary.netTransfer.toFixed(6));
+            const netUsd = summary.netUsd ?? (summary.inboundUsd - summary.outboundUsd);
+            console.log("  Net (USD):", netUsd.toFixed(6));
             if (includeBreakdown && summary.breakdown?.length) {
                 for (const token of summary.breakdown) {
                     console.log(`    · ${token.symbol}: +${token.inboundUsd.toFixed(6)} / -${token.outboundUsd.toFixed(6)}`);
