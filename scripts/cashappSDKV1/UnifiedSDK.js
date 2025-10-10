@@ -1428,23 +1428,23 @@ class UnifiedSDK {
                                     usdValue = supplyEntry.usd;
                                 }
 
-                                if (!usdValue) {
-                                    if (isStable) {
-                                        usdValue = amount;
-                                        price = 1;
-                                    } else if (reserveAddress) {
-                                        price = this._resolvePriceOverride({ priceOverrides, symbol, address: reserveAddress })
-                                            ?? await this.priceOracle.getUsdPrice({ chainId, address: reserveAddress, symbol });
-                                        usdValue = amount * price;
-                                    }
-                                } else if (!isStable) {
-                                    price = usdValue / amount;
-                                } else if (isStable && price == null) {
+                                if (isStable) {
                                     price = 1;
-                                }
+                                    usdValue = amount;
+                                } else {
+                                    if (!usdValue) {
+                                        if (reserveAddress) {
+                                            price = this._resolvePriceOverride({ priceOverrides, symbol, address: reserveAddress })
+                                                ?? await this.priceOracle.getUsdPrice({ chainId, address: reserveAddress, symbol });
+                                            usdValue = amount * price;
+                                        }
+                                    } else {
+                                        price = usdValue / amount;
+                                    }
 
-                                if (price == null && usdValue) {
-                                    price = usdValue / amount;
+                                    if (price == null && usdValue) {
+                                        price = usdValue / amount;
+                                    }
                                 }
 
                                 items.push({
@@ -1527,17 +1527,17 @@ class UnifiedSDK {
                 let price = null;
                 let usdValue = usdCandidate;
 
-                if (!usdValue) {
-                    if (isStable) {
-                        usdValue = amount;
-                        price = 1;
-                    } else {
+                if (isStable) {
+                    price = 1;
+                    usdValue = amount;
+                } else {
+                    if (!usdValue) {
                         price = this._resolvePriceOverride({ priceOverrides, symbol, address })
                             ?? await this.priceOracle.getUsdPrice({ chainId, address, symbol });
                         usdValue = amount * price;
+                    } else {
+                        price = usdValue / amount;
                     }
-                } else if (!isStable) {
-                    price = usdValue / amount;
                 }
 
                 items.push({
