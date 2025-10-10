@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Compound SDK - Linus Torvalds Design Philosophy
  *
@@ -9,17 +8,49 @@
  * 4. Pragmatism - Solve real problems, not theoretical ones
  */
 
-const { ethers } = require('ethers');
-const { compound, common } = require('./config');
-
-// Shared configuration
-const {
+import {
+    Contract,
+    JsonRpcProvider,
+    Wallet,
+    MaxUint256,
+    formatUnits,
+    parseUnits,
+    getAddress
+} from 'ethers';
+import {
     COMPOUND_MARKETS,
     COMPOUND_ABI,
     COMPOUND_CHAIN_IDS,
-    COMPOUND_CHAIN_NAMES
-} = compound;
-const { DEFAULT_RPCS } = common;
+    COMPOUND_CHAIN_NAMES,
+    type CompoundAssetConfig,
+    type CompoundMarketConfig,
+    type CompoundChainConfig
+} from '../config/compound';
+import { DEFAULT_RPCS } from '../config/common';
+
+type DynamicContract = Contract & Record<string, any>;
+
+interface AssetContext {
+    marketKey: string;
+    market: CompoundMarketConfig;
+    assetKey: string;
+    assetInfo: CompoundAssetConfig | null;
+    symbol: string;
+}
+
+interface AssetLookup {
+    bySymbol: Record<string, AssetContext[]>;
+    byAddress: Record<string, AssetContext[]>;
+    primaryByAddress: Record<string, AssetContext | null>;
+}
+
+interface TVLAssetBreakdownItem {
+    asset: string;
+    address?: string;
+    tvl: number;
+    totalSupply?: number;
+    isBase: boolean;
+}
 
 // ========== CORE DATA STRUCTURES ==========
 
@@ -27,8 +58,19 @@ const { DEFAULT_RPCS } = common;
  * Compound Operation Result - The fundamental data structure
  * Linus: "Bad programmers worry about the code. Good programmers worry about data structures."
  */
-class CompoundResult {
-    constructor(success, data = {}) {
+export class CompoundResult {
+    success: boolean;
+    hash?: string;
+    receipt?: any;
+    gasUsed?: any;
+    error?: any;
+    timestamp: number;
+    amount?: any;
+    apr?: any;
+    balance?: any;
+    rewards?: any;
+
+    constructor(success: boolean, data: any = {}) {
         this.success = success;
         this.hash = data.hash;
         this.receipt = data.receipt;
@@ -43,11 +85,11 @@ class CompoundResult {
         this.rewards = data.rewards;
     }
 
-    static success(data) {
+    static success(data: any) {
         return new CompoundResult(true, data);
     }
 
-    static failure(error) {
+    static failure(error: any) {
         return new CompoundResult(false, { error: error.message || error });
     }
 
@@ -70,8 +112,14 @@ class CompoundResult {
  * APR Data - Compound yield information
  * Encapsulates all yield-related metrics
  */
-class CompoundAPR {
-    constructor(data) {
+export class CompoundAPR {
+    baseAPR: number;
+    compAPR: number;
+    totalAPR: number;
+    asset: any;
+    timestamp: number;
+
+    constructor(data: any) {
         this.baseAPR = data.baseAPR || 0;
         this.compAPR = data.compAPR || 0;
         this.totalAPR = this.baseAPR + this.compAPR;
@@ -109,8 +157,15 @@ class CompoundAPR {
  * User Balance - Account position data
  * Simple, clear data structure for user's position
  */
-class CompoundBalance {
-    constructor(data) {
+export class CompoundBalance {
+    asset: any;
+    supplied: number;
+    cTokenBalance: number;
+    exchangeRate: number;
+    compRewards: number;
+    timestamp: number;
+
+    constructor(data: any) {
         this.asset = data.asset;
         this.supplied = data.supplied || 0;
         this.cTokenBalance = data.cTokenBalance || 0;
@@ -138,8 +193,33 @@ class CompoundBalance {
 
 // ========== COMPOUND SDK CORE ==========
 
-class CompoundSDK {
-    constructor(config = {}) {
+export interface CompoundSDKConfig {
+    chainId: number;
+    rpcUrl: string;
+    privateKey?: string;
+    slippage?: number;
+    verbose?: boolean;
+}
+
+export class CompoundSDK {
+    chainId: number;
+    rpcUrl: string;
+    privateKey?: string;
+    slippage: number;
+    private _provider: JsonRpcProvider | null;
+    private _wallet: Wallet | null;
+    chainConfig: CompoundChainConfig;
+    markets: Record<string, CompoundMarketConfig>;
+    defaultMarketKey: string;
+    defaultMarket: CompoundMarketConfig;
+    comet: string;
+    rewards: string;
+    private _lookup: AssetLookup;
+    private _cometCache: Record<string, DynamicContract>;
+    private _rewardsCache: Record<string, DynamicContract>;
+    verbose: boolean;
+
+    constructor(config: CompoundSDKConfig) {
         // Validate required config
         if (!config.chainId) throw new Error('chainId is required');
         if (!config.rpcUrl) throw new Error('rpcUrl is required');
@@ -296,8 +376,8 @@ class CompoundSDK {
             // Use provided comet address or default for chain
             const targetCometAddress = cometAddress || marketConfig.comet;
 
-            const baseAssetInfo = Object.values(marketConfig.assets || {}).find(asset => asset.role === 'base')
-                || Object.values(marketConfig.assets || {})[0];
+            const baseAssetInfo = Object.values<CompoundAssetConfig>(marketConfig.assets || {}).find(asset => asset.role === 'base')
+                || Object.values<CompoundAssetConfig>(marketConfig.assets || {})[0];
             const baseDecimals = baseAssetInfo?.decimals ?? 6;
             const baseSymbol = baseAssetInfo?.symbol || 'BaseAsset';
 
@@ -309,7 +389,7 @@ class CompoundSDK {
                 provider = targetChainId === this.chainId
                     ? this._getProvider()
                     : this._createProviderForChain(targetChainId);
-                comet = new ethers.Contract(targetCometAddress, COMPOUND_ABI.comet, provider);
+                comet = new Contract(targetCometAddress, COMPOUND_ABI.comet, provider);
             }
 
             // Get base token TVL (similar to official example)
@@ -321,20 +401,20 @@ class CompoundSDK {
 
             // Get base token price (assume USDC = $1 for simplicity)
             const basePrice = 1.0; // In production: await comet.getPrice(baseTokenPriceFeedAddr)
-            const baseTVL = Number(ethers.formatUnits(totalSupplyBase.toString(), baseDecimals)) * basePrice;
+            const baseTVL = Number(formatUnits(totalSupplyBase.toString(), baseDecimals)) * basePrice;
 
             this._log(`Base TVL: $${baseTVL.toLocaleString()}`);
 
             // Get collateral assets TVL
             let collateralTVL = 0;
-            const assetBreakdown = [{
+            const assetBreakdown: TVLAssetBreakdownItem[] = [{
                 asset: `${baseSymbol} (${marketKey})`,
                 tvl: baseTVL,
                 isBase: true
             }];
 
-            const assetMetadata = new Map();
-            for (const info of Object.values(marketConfig.assets || {})) {
+            const assetMetadata = new Map<string, CompoundAssetConfig>();
+            for (const info of Object.values<CompoundAssetConfig>(marketConfig.assets || {})) {
                 if (info.underlying) {
                     assetMetadata.set(info.underlying.toLowerCase(), info);
                 }
@@ -405,6 +485,9 @@ class CompoundSDK {
         try {
             const wallet = this._getWallet();
             const { market, assetInfo } = this._resolveAssetContext(asset);
+            if (!assetInfo?.underlying) {
+                throw new Error(`Asset ${asset} is not configured with an underlying token`);
+            }
             const assetAddress = assetInfo.underlying;
 
             // Convert amount to wei
@@ -415,7 +498,7 @@ class CompoundSDK {
 
             // Execute supply to Compound V3
             const comet = this._getCometContract(market.comet);
-            const tx = await comet.connect(wallet).supply(assetAddress, amountWei);
+            const tx = await (comet.connect(wallet) as DynamicContract).supply(assetAddress, amountWei);
 
             this._log(`Supply transaction sent: ${tx.hash} (${assetInfo.symbol || asset} on ${market.name || market.comet})`);
 
@@ -445,6 +528,9 @@ class CompoundSDK {
         try {
             const wallet = this._getWallet();
             const { market, assetInfo } = this._resolveAssetContext(asset);
+            if (!assetInfo?.underlying) {
+                throw new Error(`Asset ${asset} is not configured with an underlying token`);
+            }
             const assetAddress = assetInfo.underlying;
 
             // Convert amount to wei
@@ -452,7 +538,7 @@ class CompoundSDK {
 
             // Execute withdraw from Compound V3
             const comet = this._getCometContract(market.comet);
-            const tx = await comet.connect(wallet).withdraw(assetAddress, amountWei);
+            const tx = await (comet.connect(wallet) as DynamicContract).withdraw(assetAddress, amountWei);
 
             this._log(`Withdraw transaction sent: ${tx.hash} (${assetInfo.symbol || asset} on ${market.name || market.comet})`);
 
@@ -493,7 +579,7 @@ class CompoundSDK {
             }
 
             // Execute claim
-            const tx = await rewards.connect(wallet).claim(this.comet, userAddress, true);
+            const tx = await (rewards.connect(wallet) as DynamicContract).claim(this.comet, userAddress, true);
 
             this._log(`Claim rewards transaction sent: ${tx.hash}`);
 
@@ -518,6 +604,9 @@ class CompoundSDK {
     async getBalance(asset, userAddress) {
         try {
             const { market, assetInfo } = this._resolveAssetContext(asset);
+            if (!assetInfo) {
+                throw new Error(`Asset ${asset} is not configured`);
+            }
             const comet = this._getCometContract(market.comet);
             const rewards = this._getRewardsContract(market.rewards);
 
@@ -530,8 +619,8 @@ class CompoundSDK {
             const supplied = this._fromWei(balance.toString(), assetInfo.decimals);
 
             // Handle anomalous reward values (Base chain issue)
-           let compRewards = this._fromWei(rewardOwed.toString(), 18);
-           if (compRewards > 1e20) { // Clearly anomalous value
+            let compRewards = this._fromWei(rewardOwed.toString(), 18);
+            if (compRewards > 1e20) { // Clearly anomalous value
                 this._log(`Warning: Anomalous COMP reward value detected: ${compRewards.toExponential(2)}`);
                 compRewards = 0; // Treat as zero until resolved
             }
@@ -551,7 +640,7 @@ class CompoundSDK {
 
     // ========== INTERNAL METHODS ==========
 
-    _getChainConfig(chainId) {
+    _getChainConfig(chainId: number): CompoundChainConfig {
         const chainName = COMPOUND_CHAIN_NAMES[chainId];
         if (!chainName) {
             throw new Error(`Unsupported chain: ${chainId}`);
@@ -559,12 +648,12 @@ class CompoundSDK {
         return COMPOUND_MARKETS[chainName];
     }
 
-    _getAsset(asset) {
+    _getAsset(asset: string | CompoundAssetConfig | AssetContext): CompoundAssetConfig | null {
         return this._resolveAssetContext(asset).assetInfo;
     }
 
-    _buildAssetLookup(markets) {
-        const lookup = {
+    _buildAssetLookup(markets: Record<string, CompoundMarketConfig>): AssetLookup {
+        const lookup: AssetLookup = {
             bySymbol: {},
             byAddress: {},
             primaryByAddress: {}
@@ -574,7 +663,7 @@ class CompoundSDK {
 
         const entries = Object.entries(markets);
 
-        const addToMap = (map, key, context) => {
+        const addToMap = (map: Record<string, AssetContext[]>, key: string | undefined, context: AssetContext) => {
             if (!key) return;
             const normalized = key.toLowerCase();
             if (!map[normalized]) {
@@ -585,13 +674,13 @@ class CompoundSDK {
 
         for (const [marketKey, market] of entries) {
             const assets = market.assets || {};
-            const assetEntries = Object.entries(assets);
+            const assetEntries = Object.entries(assets) as [string, CompoundAssetConfig][];
 
             let primaryContext = null;
             const primaryAddress = market.keyAssetAddress?.toLowerCase();
 
             for (const [symbol, info] of assetEntries) {
-                const context = {
+                const context: AssetContext = {
                     marketKey,
                     market,
                     assetKey: symbol,
@@ -625,19 +714,26 @@ class CompoundSDK {
         return lookup;
     }
 
-    _resolveAssetContext(asset) {
+    _resolveAssetContext(asset: string | CompoundAssetConfig | AssetContext): AssetContext {
         if (!asset) {
             throw new Error('Asset identifier is required');
         }
 
-        if (typeof asset === 'object' && asset.underlying) {
-            return {
-                market: this.defaultMarket,
-                marketKey: this.defaultMarketKey,
-                assetKey: asset.symbol || 'custom',
-                assetInfo: asset,
-                symbol: asset.symbol
-            };
+        if (typeof asset === 'object') {
+            if ('market' in asset && 'assetInfo' in asset && 'marketKey' in asset) {
+                return asset as AssetContext;
+            }
+
+            if ('underlying' in asset) {
+                const assetConfig = asset as CompoundAssetConfig;
+                return {
+                    market: this.defaultMarket,
+                    marketKey: this.defaultMarketKey,
+                    assetKey: assetConfig.symbol || 'custom',
+                    assetInfo: assetConfig,
+                    symbol: assetConfig.symbol
+                };
+            }
         }
 
         if (typeof asset !== 'string') {
@@ -671,8 +767,9 @@ class CompoundSDK {
         const { bySymbol, byAddress, primaryByAddress } = this._lookup;
 
         if (isAddressInput) {
-            if (primaryByAddress[assetKey]) {
-                return primaryByAddress[assetKey];
+            const primaryContext = primaryByAddress[assetKey];
+            if (primaryContext) {
+                return primaryContext;
             }
 
             const contexts = byAddress[assetKey];
@@ -715,7 +812,7 @@ class CompoundSDK {
         return symbolContexts[0];
     }
 
-    _getAssetFromMarket(market, assetIdentifier) {
+    _getAssetFromMarket(market: CompoundMarketConfig, assetIdentifier: string): CompoundAssetConfig | null {
         if (!market?.assets) return null;
 
         // Try symbol match first
@@ -724,7 +821,7 @@ class CompoundSDK {
 
         // Try address match
         const lowerId = assetIdentifier.toLowerCase();
-        for (const info of Object.values(market.assets)) {
+        for (const info of Object.values<CompoundAssetConfig>(market.assets)) {
             if (info.underlying && info.underlying.toLowerCase() === lowerId) {
                 return info;
             }
@@ -732,41 +829,41 @@ class CompoundSDK {
         return null;
     }
 
-    _getProvider() {
+    _getProvider(): JsonRpcProvider {
         if (!this._provider) {
-            this._provider = new ethers.JsonRpcProvider(this.rpcUrl);
+            this._provider = new JsonRpcProvider(this.rpcUrl);
         }
         return this._provider;
     }
 
-    _getWallet() {
+    _getWallet(): Wallet {
         if (!this._wallet) {
-            this._wallet = new ethers.Wallet(this.privateKey, this._getProvider());
+            this._wallet = new Wallet(this.privateKey, this._getProvider());
         }
         return this._wallet;
     }
 
-    _getCometContract(cometAddress = this.comet) {
-        const address = ethers.getAddress(cometAddress);
+    _getCometContract(cometAddress = this.comet): DynamicContract {
+        const address = getAddress(cometAddress);
         if (!this._cometCache[address]) {
-            this._cometCache[address] = new ethers.Contract(address, COMPOUND_ABI.comet, this._getProvider());
+            this._cometCache[address] = new Contract(address, COMPOUND_ABI.comet, this._getProvider()) as DynamicContract;
         }
         return this._cometCache[address];
     }
 
-    _getRewardsContract(rewardsAddress = this.rewards) {
-        const address = ethers.getAddress(rewardsAddress);
+    _getRewardsContract(rewardsAddress = this.rewards): DynamicContract {
+        const address = getAddress(rewardsAddress);
         if (!this._rewardsCache[address]) {
-            this._rewardsCache[address] = new ethers.Contract(address, COMPOUND_ABI.rewards, this._getProvider());
+            this._rewardsCache[address] = new Contract(address, COMPOUND_ABI.rewards, this._getProvider()) as DynamicContract;
         }
         return this._rewardsCache[address];
     }
 
-    _getERC20Contract(address) {
-        return new ethers.Contract(address, COMPOUND_ABI.erc20, this._getProvider());
+    _getERC20Contract(address: string): DynamicContract {
+        return new Contract(address, COMPOUND_ABI.erc20, this._getProvider()) as DynamicContract;
     }
 
-    async _handleApproval(wallet, tokenAddress, spenderAddress, amount) {
+    async _handleApproval(wallet: Wallet, tokenAddress: string, spenderAddress: string, amount: bigint) {
         const token = this._getERC20Contract(tokenAddress);
 
         // Check current allowance
@@ -779,20 +876,20 @@ class CompoundSDK {
 
         // Execute approve
         this._log(`Approving ${tokenAddress} for ${spenderAddress}`);
-        const approveTx = await token.connect(wallet).approve(spenderAddress, ethers.MaxUint256);
+        const approveTx = await (token.connect(wallet) as DynamicContract).approve(spenderAddress, MaxUint256);
         await approveTx.wait();
         this._log(`Approval confirmed: ${approveTx.hash}`);
     }
 
-    _toWei(amount, decimals = 18) {
-        return ethers.parseUnits(amount.toString(), decimals);
+    _toWei(amount: number, decimals = 18): bigint {
+        return parseUnits(amount.toString(), decimals);
     }
 
-    _fromWei(amount, decimals = 18) {
-        return Number(ethers.formatUnits(amount, decimals));
+    _fromWei(amount: bigint | string, decimals = 18): number {
+        return Number(formatUnits(amount, decimals));
     }
 
-    _log(message) {
+    _log(message: string) {
         if (this.verbose) {
             console.log(`[CompoundSDK] ${message}`);
         }
@@ -800,7 +897,7 @@ class CompoundSDK {
 
     // ========== TVL HELPER METHODS ==========
 
-    _getChainIdFromName(chainName) {
+    _getChainIdFromName(chainName: string): number {
         const chainId = COMPOUND_CHAIN_IDS[chainName.toLowerCase()];
         if (!chainId) {
             throw new Error(`Unsupported chain: ${chainName}`);
@@ -808,16 +905,19 @@ class CompoundSDK {
         return chainId;
     }
 
-    _getChainName(chainId) {
+    _getChainName(chainId: number): string {
         return COMPOUND_CHAIN_NAMES[chainId] || `chain-${chainId}`;
     }
 
-    _getMarketConfig(chainId, marketKey = null) {
+    _getMarketConfig(chainId: number, marketKey: string | null = null): { key: string; market: CompoundMarketConfig } {
         const chainConfig = this._getChainConfig(chainId);
         const markets = chainConfig?.markets || {};
-        const key = marketKey
-            ? marketKey.toLowerCase()
-            : (chainConfig.defaultMarket || Object.keys(markets)[0]);
+        const defaultKey = chainConfig.defaultMarket || Object.keys(markets)[0];
+        const key = marketKey ? marketKey.toLowerCase() : defaultKey;
+
+        if (!key) {
+            throw new Error(`No market configuration for chain ${chainId}`);
+        }
 
         const market = markets[key];
         if (!market) {
@@ -827,16 +927,16 @@ class CompoundSDK {
         return { key, market };
     }
 
-    _createProviderForChain(chainId) {
+    _createProviderForChain(chainId: number): JsonRpcProvider {
         // For simplicity, use shared defaults (can be overridden via config)
         const rpcUrl = DEFAULT_RPCS[chainId];
         if (!rpcUrl) {
             throw new Error(`No default RPC configured for chain ${chainId}`);
         }
-        return new ethers.JsonRpcProvider(rpcUrl);
+        return new JsonRpcProvider(rpcUrl);
     }
 
-    _getAssetPrice(assetSymbol) {
+    _getAssetPrice(assetSymbol: string): number {
         // Simplified pricing (in production, use price oracle)
         const stablecoins = ['USDC', 'USDT', 'DAI'];
         if (stablecoins.includes(assetSymbol)) {
@@ -847,11 +947,4 @@ class CompoundSDK {
     }
 }
 
-// ========== EXPORTS ==========
-module.exports = {
-    CompoundSDK,
-    CompoundResult,
-    CompoundAPR,
-    CompoundBalance,
-    COMPOUND_MARKETS
-};
+export { COMPOUND_MARKETS };

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Compound SDK Usage Examples
  *
@@ -6,8 +5,8 @@
  * These examples demonstrate real-world CashApp integration patterns
  */
 
-require('dotenv').config();
-const { CompoundSDK } = require('./CompoundSDK');
+import 'dotenv/config';
+import { CompoundSDK } from '../bolaritySDK';
 
 // ========== CONFIGURATION ==========
 const config = {
@@ -19,7 +18,7 @@ const config = {
 };
 
 // ========== EXAMPLE 1: GET APR INFORMATION ==========
-async function example1_getAPRs() {
+export async function example1_getAPRs() {
     console.log('\n=== Example 1: Get APR Information ===');
 
     const sdk = new CompoundSDK(config);
@@ -51,7 +50,7 @@ async function example1_getAPRs() {
 }
 
 // ========== EXAMPLE 2: GET USER BALANCE ==========
-async function example2_getBalance() {
+export async function example2_getBalance() {
     console.log('\n=== Example 2: Get User Balance ===');
 
     const sdk = new CompoundSDK(config);
@@ -78,7 +77,7 @@ async function example2_getBalance() {
 }
 
 // ========== EXAMPLE 3: SUPPLY OPERATION ==========
-async function example3_supply() {
+export async function example3_supply() {
     console.log('\n=== Example 3: Supply to Compound ===');
 
     if (!config.privateKey) {
@@ -111,7 +110,7 @@ async function example3_supply() {
 }
 
 // ========== EXAMPLE 4: WITHDRAW OPERATION ==========
-async function example4_withdraw() {
+export async function example4_withdraw() {
     console.log('\n=== Example 4: Withdraw from Compound ===');
 
     if (!config.privateKey) {
@@ -144,7 +143,7 @@ async function example4_withdraw() {
 }
 
 // ========== EXAMPLE 5: CLAIM COMP REWARDS ==========
-async function example5_claimRewards() {
+export async function example5_claimRewards() {
     console.log('\n=== Example 5: Claim COMP Rewards ===');
 
     if (!config.privateKey) {
@@ -181,7 +180,7 @@ async function example5_claimRewards() {
 }
 
 // ========== EXAMPLE 6: GET COMPLETE TVL ==========
-async function example6_getTVL() {
+export async function example6_getTVL() {
     console.log('\n=== Example 6: Get Complete Total Value Locked (TVL) ===');
     console.log('📖 API Usage: getTVL(chainName, cometAddress)');
     console.log('├─ chainName: "ethereum" | "base" | null (current)');
@@ -438,30 +437,20 @@ async function handleChoice(choice) {
     }
 }
 
-async function main() {
+export async function main() {
     const args = process.argv.slice(2);
     const choice = args[0];
 
     if (!choice) {
         showMenu();
-        console.log('\nUsage: node compound-examples.js [option]');
-        console.log('Example: node compound-examples.js 6  # Get TVL');
-        console.log('         node compound-examples.js 1  # View APR');
+        console.log('\nUsage: ts-node examples/compound.ts [option]');
+        console.log('Example: ts-node examples/compound.ts 6  # Get TVL');
+        console.log('         ts-node examples/compound.ts 1  # View APR');
         return;
     }
 
     await handleChoice(choice);
 }
-
-// Export for testing
-module.exports = {
-    example1_getAPRs,
-    example2_getBalance,
-    example3_supply,
-    example4_withdraw,
-    example5_claimRewards,
-    example6_getTVL
-};
 
 // Run if called directly
 if (require.main === module) {

@@ -1,13 +1,12 @@
-#!/usr/bin/env node
 /**
  * Pendle SDK Usage Examples
  *
  * Linus Philosophy: "Show, don't tell"
  * These examples demonstrate real-world usage patterns
  */
-require('dotenv').config();
-const { PendleSDK, CHAINS } = require('./PendleSDK');
-const { pendle } = require('./config');
+import 'dotenv/config';
+import * as readline from 'node:readline';
+import { CHAINS, PendleSDK, resolvePendleMarket } from '../bolaritySDK';
 
 // ========== CONFIGURATION ==========
 const config = {
@@ -21,22 +20,36 @@ const config = {
 
 const DEFAULT_MARKET = '0x8991847176b1d187e403dd92a4e55fc8d7684538';
 const MARKET = DEFAULT_MARKET;
-const MARKET_META = pendle.resolvePendleMarket(MARKET) || {};
+const MARKET_META = resolvePendleMarket(MARKET);
 
-if (!MARKET_META.address) {
-    console.warn('⚠️  Pendle market not found in local config. Update src/sdk/config/pendle.js to include it.');
+if (!MARKET_META?.address) {
+    console.warn('⚠️  Pendle market not found in local config. Update src/config/pendle.ts to include it.');
 }
 
-const UNDERLYING_TOKEN = MARKET_META.underlying || CHAINS.base.usdc;
-const PT_TOKEN = MARKET_META.pt;
-const YT_TOKEN = MARKET_META.yt;
+const UNDERLYING_TOKEN = MARKET_META?.underlying || CHAINS.base.usdc;
+const PT_TOKEN = MARKET_META?.pt;
+const YT_TOKEN = MARKET_META?.yt;
 
 if (!PT_TOKEN) {
-    console.warn('⚠️  PT token not defined for selected market. Update src/sdk/config/pendle.js.');
+    console.warn('⚠️  PT token not defined for selected market. Update src/config/pendle.ts.');
+}
+
+function formatMaturityDate(value: unknown): string {
+    if (!value) return 'Unknown';
+    if (value instanceof Date) {
+        return value.toLocaleDateString();
+    }
+    if (typeof value === 'string' || typeof value === 'number') {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toLocaleDateString();
+        }
+    }
+    return String(value);
 }
 
 // ========== EXAMPLE 1: ENHANCED QUOTE WITH APY ==========
-async function example1_getQuote() {
+export async function example1_getQuote() {
     console.log('\n=== Example 1: Get Enhanced Quote ===');
 
     const sdk = new PendleSDK(config);
@@ -57,10 +70,10 @@ async function example1_getQuote() {
         console.log('├─ Profitable:', quote.isprofitable ? 'Yes' : 'No');
         console.log('├─ Exchange Rate:', quote.exchangeRate.toFixed(6), 'PT/USDC');
 
-        if (quote.daysToMaturity !== null) {
+        if (typeof quote.daysToMaturity === 'number') {
             console.log('├─ Days to Maturity:', quote.daysToMaturity.toFixed(1), 'days');
-            console.log('├─ Maturity Date:', quote.maturityDate?.toLocaleDateString() || 'Unknown');
         }
+        console.log('├─ Maturity Date:', formatMaturityDate(quote.maturityDate));
 
         if (quote.apyPercentage !== null) {
             console.log('└─ Annual APY:', quote.apyPercentage.toFixed(2) + '%');
@@ -76,7 +89,7 @@ async function example1_getQuote() {
 }
 
 // ========== EXAMPLE 2: MATURITY AND APY ANALYSIS ==========
-async function example2_maturityAndAPY() {
+export async function example2_maturityAndAPY() {
     console.log('\n=== Example 2: Maturity and APY Analysis ===');
 
     const sdk = new PendleSDK(config);
@@ -87,7 +100,10 @@ async function example2_maturityAndAPY() {
         const maturityInfo = await sdk.getMaturityInfo(MARKET);
 
         console.log('✅ Maturity Information:');
-        console.log('├─ Maturity Date:', maturityInfo.maturityDate?.toLocaleDateString() || 'Unknown');
+        if (typeof maturityInfo.daysToMaturity === 'number') {
+            console.log('├─ Days to Maturity:', maturityInfo.daysToMaturity.toFixed(1), 'days');
+        }
+        console.log('├─ Maturity Date:', formatMaturityDate(maturityInfo.maturityDate));
         console.log('├─ Days to Maturity:', maturityInfo.daysToMaturity?.toFixed(1) || 'Unknown');
         console.log('└─ Timestamp:', maturityInfo.maturityTimestamp || 'N/A');
 
@@ -127,7 +143,7 @@ async function example2_maturityAndAPY() {
 }
 
 // ========== EXAMPLE 3: DRY RUN ARBITRAGE ==========
-async function example3_dryRunArbitrage() {
+export async function example3_dryRunArbitrage() {
     console.log('\n=== Example 3: Dry Run Arbitrage ===');
 
     const sdk = new PendleSDK(config);
@@ -155,7 +171,7 @@ async function example3_dryRunArbitrage() {
 }
 
 // ========== EXAMPLE 4: EXECUTE SINGLE SWAP ==========
-async function example4_executeSwap() {
+export async function example4_executeSwap() {
     console.log('\n=== Example 4: Execute Swap ===');
 
     if (!config.privateKey) {
@@ -198,7 +214,7 @@ async function example4_executeSwap() {
 }
 
 // ========== EXAMPLE 5: FULL ARBITRAGE ==========
-async function example5_fullArbitrage() {
+export async function example5_fullArbitrage() {
     console.log('\n=== Example 5: Full Arbitrage ===');
 
     if (!config.privateKey) {
@@ -247,7 +263,7 @@ async function example5_fullArbitrage() {
 }
 
 // ========== EXAMPLE 6: REDEEM PT & YT ==========
-async function example6_redeemTokens() {
+export async function example6_redeemTokens() {
     console.log('\n=== Example 6: Redeem PT & YT to Underlying ===');
 
     const sdk = new PendleSDK(config);
@@ -255,7 +271,7 @@ async function example6_redeemTokens() {
     try {
         if (!YT_TOKEN) {
             console.log('❌ YT token address not configured in local pendle config');
-            console.log('💡 Update src/sdk/config/pendle.js for this market to include a yt address');
+            console.log('💡 Update src/config/pendle.ts for this market to include a yt address');
             return;
         }
 
@@ -308,7 +324,7 @@ async function example6_redeemTokens() {
 }
 
 // ========== EXAMPLE 7: SHOW PT BALANCE ==========
-async function example7_showPtBalance() {
+export async function example7_showPtBalance() {
     console.log('\n=== Example 7: Show PT Balance ===');
 
     const sdk = new PendleSDK(config);
@@ -338,8 +354,7 @@ function frontendExample() {
     console.log(`
 // React/Vue/Angular usage:
 
-import { PendleSDK, CHAINS } from './PendleSDK';
-import { pendle } from './config';
+import { PendleSDK, CHAINS, resolvePendleMarket } from 'bolaritySDK';
 
 const sdk = new PendleSDK({
     chainId: CHAINS.base.id,
@@ -350,7 +365,7 @@ const sdk = new PendleSDK({
 });
 
 const MARKET = '0x44e2b05b2c17a12b37f11de18000922e64e23faa';
-const marketMeta = pendle.resolvePendleMarket(MARKET);
+const marketMeta = resolvePendleMarket(MARKET);
 
 // Get quote for UI
 async function getQuote(amount) {
@@ -413,7 +428,7 @@ async function showMenu() {
     console.log('='.repeat(50));
 }
 
-async function executeChoice(choice) {
+async function executeChoice(choice: string) {
     switch (choice) {
         case '1':
             return await example1_getQuote();
@@ -442,7 +457,7 @@ async function executeChoice(choice) {
     }
 }
 
-async function runAllExamples() {
+export async function runAllExamples() {
     console.log('\n🔄 Running All Examples...');
     try {
         await example1_getQuote();
@@ -459,7 +474,7 @@ async function runAllExamples() {
     }
 }
 
-async function main() {
+export async function main() {
     console.log('🚀 Pendle SDK Examples');
     console.log('Current Configuration:');
     console.log('├─ Chain:', CHAINS.base.name, `(${CHAINS.base.id})`);
@@ -467,13 +482,12 @@ async function main() {
     console.log('├─ PT Token:', PT_TOKEN.slice(0, 10) + '...');
     console.log('└─ Has Private Key:', config.privateKey ? 'Yes ✅' : 'No ⚠️ (read-only mode)');
 
-    const readline = require('readline');
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
     });
 
-    const question = (prompt) => new Promise((resolve) => rl.question(prompt, resolve));
+    const question = (prompt: string) => new Promise<string>((resolve) => rl.question(prompt, resolve));
 
     try {
         while (true) {
@@ -481,13 +495,14 @@ async function main() {
             const choice = await question('\nSelect an option (0-9): ');
 
             console.log('\n' + '='.repeat(50));
-            await executeChoice(choice.trim());
+            const trimmedChoice = choice.trim();
+            await executeChoice(trimmedChoice);
 
-            if (choice.trim() === '0') break;
+            if (trimmedChoice === '0') break;
 
             console.log('\n' + '='.repeat(50));
             const continueChoice = await question('Press Enter to continue or type "exit" to quit: ');
-            if (continueChoice.toLowerCase() === 'exit') break;
+            if (continueChoice.trim().toLowerCase() === 'exit') break;
         }
     } catch (error) {
         console.error('💥 Application error:', error.message);
@@ -495,19 +510,6 @@ async function main() {
         rl.close();
     }
 }
-
-// Export for testing
-module.exports = {
-    example1_getQuote,
-    example2_maturityAndAPY,
-    example3_dryRunArbitrage,
-    example4_executeSwap,
-    example5_fullArbitrage,
-    example6_redeemTokens,
-    example7_showPtBalance,
-    runAllExamples,
-    main
-};
 
 // Run if called directly
 if (require.main === module) {

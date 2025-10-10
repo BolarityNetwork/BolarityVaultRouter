@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Pendle SDK - Linus Torvalds Design Philosophy
  *
@@ -9,20 +8,25 @@
  * 4. Data structures first - Good APIs start with good data
  */
 
-const axios = require('axios');
-const { ethers } = require('ethers');
-const { pendle, common } = require('./config');
-
-// Shared configuration
-const {
+import axios, { AxiosInstance } from 'axios';
+import {
+    JsonRpcProvider,
+    Wallet,
+    getAddress,
+    zeroPadValue,
+    toBeHex,
+    formatUnits,
+    parseUnits
+} from 'ethers';
+import {
     PENDLE_ROUTER,
     PENDLE_API_BASE,
     PENDLE_CHAINS,
     ERC20_ABI,
     PENDLE_MARKETS,
     resolvePendleMarket
-} = pendle;
-const { MAX_UINT256 } = common;
+} from '../config/pendle';
+import { MAX_UINT256 } from '../config/common';
 
 // ========== CORE DATA STRUCTURES ==========
 
@@ -30,8 +34,20 @@ const { MAX_UINT256 } = common;
  * Swap Quote - The fundamental data structure
  * Linus: "Bad programmers worry about the code. Good programmers worry about data structures."
  */
-class SwapQuote {
-    constructor(data) {
+export class SwapQuote {
+    amountIn: number;
+    amountOut: number;
+    exchangeRate: number;
+    priceImpact: number;
+    slippage: number;
+    calldata: any;
+    approvals: any[];
+    gas: any;
+    maturityDate?: string | null;
+    daysToMaturity?: number | null;
+    apy?: number | null;
+
+    constructor(data: any) {
         this.amountIn = data.amountIn;
         this.amountOut = data.amountOut;
         this.exchangeRate = data.amountOut / data.amountIn;
@@ -83,8 +99,15 @@ class SwapQuote {
  * Transaction Result - Consistent return structure
  * Eliminates the need for special case handling
  */
-class TxResult {
-    constructor(success, data = {}) {
+export class TxResult {
+    success: boolean;
+    hash?: string;
+    receipt?: any;
+    gasUsed?: any;
+    error?: any;
+    timestamp: number;
+
+    constructor(success: boolean, data: any = {}) {
         this.success = success;
         this.hash = data.hash;
         this.receipt = data.receipt;
@@ -93,19 +116,45 @@ class TxResult {
         this.timestamp = Date.now();
     }
 
-    static success(data) {
+    static success(data: any) {
         return new TxResult(true, data);
     }
 
-    static failure(error) {
+    static failure(error: any) {
         return new TxResult(false, { error: error.message || error });
     }
 }
 
+export interface PendleArbitrageStep {
+    quote: SwapQuote;
+    transaction?: TxResult | null;
+    dryRun?: boolean;
+}
+
+export interface PendleArbitrageResult {
+    step1: PendleArbitrageStep | null;
+    step2: PendleArbitrageStep | null;
+    totalProfit: number;
+    success: boolean;
+    error?: string;
+}
+
 // ========== PENDLE SDK CORE ==========
 
-class PendleSDK {
-    constructor(config = {}) {
+export class PendleSDK {
+    chainId: number;
+    chain: any;
+    chainKey: string;
+    rpcUrl: string;
+    slippage: number;
+    receiver?: string;
+    privateKey?: string;
+    private _provider: JsonRpcProvider | null;
+    private _wallet: Wallet | null;
+    markets: Record<string, any>;
+    verbose: boolean;
+
+    constructor(config: any = {}) {
         // Validate required config
         if (!config.chainId) throw new Error('chainId is required');
         if (!config.rpcUrl) throw new Error('rpcUrl is required');
@@ -177,20 +226,20 @@ class PendleSDK {
             }
         }
 
-        const accountAddress = ethers.getAddress(account);
-        const ptAddress = ethers.getAddress(marketMeta.pt);
+        const accountAddress = getAddress(account);
+        const ptAddress = getAddress(marketMeta.pt);
         const decimals = await this._getTokenDecimals(ptAddress);
 
         const balanceData = await this._getProvider().call({
             to: ptAddress,
-            data: ERC20_ABI.balanceOf + ethers.zeroPadValue(accountAddress, 32).slice(2)
+            data: ERC20_ABI.balanceOf + zeroPadValue(accountAddress, 32).slice(2)
         });
 
         const balanceRaw = balanceData && balanceData !== '0x'
             ? BigInt(balanceData)
             : 0n;
 
-        const formatted = ethers.formatUnits(balanceRaw, decimals);
+        const formatted = formatUnits(balanceRaw, decimals);
 
         return {
             market: marketMeta.alias || marketMeta.address,
@@ -224,8 +273,9 @@ class PendleSDK {
 
             if (marketData && marketData.expiry) {
                 const maturityDate = new Date(marketData.expiry); // Direct ISO string parsing
-                const now = new Date();
-                const daysToMaturity = (maturityDate - now) / (1000 * 60 * 60 * 24);
+                const now = Date.now();
+                const differenceMs = Math.max(0, maturityDate.getTime() - now);
+                const daysToMaturity = differenceMs / (1000 * 60 * 60 * 24);
                 const maturityTimestamp = Math.floor(maturityDate.getTime() / 1000);
 
                 this._log(`Found real maturity: ${maturityDate.toLocaleDateString()}`);
@@ -242,8 +292,9 @@ class PendleSDK {
 
             if (directResponse.data.expiry) {
                 const maturityDate = new Date(directResponse.data.expiry); // Direct ISO string parsing
-                const now = new Date();
-                const daysToMaturity = (maturityDate - now) / (1000 * 60 * 60 * 24);
+                const now = Date.now();
+                const differenceMs = Math.max(0, maturityDate.getTime() - now);
+                const daysToMaturity = differenceMs / (1000 * 60 * 60 * 24);
                 const maturityTimestamp = Math.floor(maturityDate.getTime() / 1000);
 
                 this._log(`Found real maturity via direct query: ${maturityDate.toLocaleDateString()}`);
@@ -377,7 +428,7 @@ class PendleSDK {
             const tokenOutDecimals = tokenOut ? await this._getTokenDecimals(tokenOut) : 18;
 
             const url = `${PENDLE_API_BASE}/core/v2/sdk/${this.chainId}/redeem`;
-            const params = {
+            const params: Record<string, unknown> = {
                 receiver: this.receiver,
                 slippage: this.slippage.toString(),
                 enableAggregator: true,
@@ -493,10 +544,16 @@ class PendleSDK {
      * Complete arbitrage flow: Stablecoin -> PT -> profit extraction
      * This is the "good taste" API - no special cases
      */
-    async arbitrageStablecoin(stablecoinAddress, amount, ptToken, market, options = {}) {
-        const results = {
-            step1: null, // Stablecoin -> PT
-            step2: null, // PT profit -> Stablecoin
+    async arbitrageStablecoin(
+        stablecoinAddress: any,
+        amount: number,
+        ptToken: any,
+        market: any,
+        options: Record<string, unknown> = {}
+    ): Promise<PendleArbitrageResult> {
+        const results: PendleArbitrageResult = {
+            step1: null,
+            step2: null,
             totalProfit: 0,
             success: false
         };
@@ -552,7 +609,7 @@ class PendleSDK {
             return results;
 
         } catch (error) {
-            results.error = error.message;
+            results.error = error instanceof Error ? error.message : String(error);
             return results;
         }
     }
@@ -576,14 +633,14 @@ class PendleSDK {
 
     _getProvider() {
         if (!this._provider) {
-            this._provider = new ethers.JsonRpcProvider(this.rpcUrl);
+            this._provider = new JsonRpcProvider(this.rpcUrl);
         }
         return this._provider;
     }
 
     _getWallet() {
         if (!this._wallet) {
-            this._wallet = new ethers.Wallet(this.privateKey, this._getProvider());
+            this._wallet = new Wallet(this.privateKey, this._getProvider());
         }
         return this._wallet;
     }
@@ -596,8 +653,8 @@ class PendleSDK {
 
             // Check current allowance
             const allowanceData = ERC20_ABI.allowance +
-                ethers.zeroPadValue(wallet.address, 32).slice(2) +
-                ethers.zeroPadValue(spender, 32).slice(2);
+                zeroPadValue(wallet.address, 32).slice(2) +
+                zeroPadValue(spender, 32).slice(2);
 
             const currentAllowance = await wallet.provider.call({
                 to: approval.token,
@@ -615,8 +672,8 @@ class PendleSDK {
             // Execute approve
             this._log(`Approving ${approval.token} for ${spender}`);
             const approveData = ERC20_ABI.approve +
-                ethers.zeroPadValue(spender, 32).slice(2) +
-                ethers.toBeHex(MAX_UINT256, 32).slice(2);
+                zeroPadValue(spender, 32).slice(2) +
+                toBeHex(MAX_UINT256, 32).slice(2);
 
             const approveTx = await wallet.sendTransaction({
                 to: approval.token,
@@ -689,7 +746,7 @@ class PendleSDK {
 
         if (!resolved) {
             if (optional) return null;
-            throw new Error(`Unknown Pendle market: ${market}. Add it to src/sdk/config/pendle.js`);
+            throw new Error(`Unknown Pendle market: ${market}. Add it to src/config/pendle.ts`);
         }
 
         if (resolved.chainId && resolved.chainId !== this.chainId) {
@@ -699,10 +756,10 @@ class PendleSDK {
         return resolved;
     }
 
-    async _getTokenDecimals(tokenAddress) {
+    async _getTokenDecimals(tokenAddress: string) {
         try {
             // Ensure proper address format
-            const address = ethers.getAddress(tokenAddress);
+            const address = getAddress(tokenAddress);
 
             // decimals() function call - no parameters needed
             const result = await this._getProvider().call({
@@ -716,26 +773,21 @@ class PendleSDK {
         }
     }
 
-    _toWei(amount, decimals = 18) {
-        return (BigInt(Math.floor(amount * 1e6)) * 10n ** BigInt(decimals - 6)).toString();
+    _toWei(amount: number | string, decimals = 18) {
+        return parseUnits(amount.toString(), decimals).toString();
     }
 
-    _fromWei(amount, decimals = 18) {
-        return Number(amount) / (10 ** decimals);
+    _fromWei(amount: bigint | string, decimals = 18) {
+        const value = typeof amount === 'bigint' ? amount : BigInt(amount);
+        return Number(formatUnits(value, decimals));
     }
 
-    _log(message) {
+    _log(message: string) {
         if (this.verbose) {
             console.log(`[PendleSDK] ${message}`);
         }
     }
 }
 
-// ========== EXPORTS ==========
-module.exports = {
-    PendleSDK,
-    SwapQuote,
-    TxResult,
-    CHAINS: PENDLE_CHAINS,
-    PENDLE_ROUTER
-};
+export const CHAINS = PENDLE_CHAINS;
+export { PENDLE_ROUTER, PENDLE_MARKETS, resolvePendleMarket };
