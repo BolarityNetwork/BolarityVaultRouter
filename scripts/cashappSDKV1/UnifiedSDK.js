@@ -1328,6 +1328,51 @@ class UnifiedSDK {
                         }
                     } else {
                         const marketsData = Array.isArray(marketResult.value) ? marketResult.value : [];
+
+                        let supplyMap = new Map();
+                        if (userSupplies && typeof userSupplies === 'function') {
+                            try {
+                                const supplyRequestMarkets = marketsData
+                                    .map(info => info?.address)
+                                    .filter(Boolean)
+                                    .map(address => ({
+                                        chainId: asChainId(chainId),
+                                        address: evmAddress(address)
+                                    }));
+
+                                if (supplyRequestMarkets.length) {
+                                    const suppliesResult = await userSupplies(client, {
+                                        markets: supplyRequestMarkets,
+                                        user
+                                    });
+
+                                    if (suppliesResult && typeof suppliesResult.isOk === 'function' && suppliesResult.isOk()) {
+                                        const positions = Array.isArray(suppliesResult.value) ? suppliesResult.value : [];
+                                        for (const position of positions) {
+                                            const marketAddress = position?.market?.address?.toLowerCase();
+                                            const tokenAddress = position?.currency?.address?.toLowerCase();
+                                            if (!marketAddress || !tokenAddress) continue;
+
+                                            const amount = this._extractNumeric(
+                                                position?.balance?.amount
+                                                ?? position?.balance
+                                            );
+                                            const usd = this._extractNumeric(position?.balance?.usd);
+
+                                            supplyMap.set(`${marketAddress}:${tokenAddress}`, {
+                                                amount,
+                                                usd
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch (error) {
+                                if (this.verbose) {
+                                    console.warn('Aave userSupplies enrichment failed:', error?.message || error);
+                                }
+                            }
+                        }
+
                         for (const marketInfo of marketsData) {
                             const marketAddress = (marketInfo?.address || marketInfo?.marketAddress || '').toLowerCase();
                             if (targetMarkets.size && !targetMarkets.has(marketAddress)) {
@@ -1337,16 +1382,14 @@ class UnifiedSDK {
                             const reserves = Array.isArray(marketInfo?.supplyReserves) ? marketInfo.supplyReserves : [];
                             for (const reserve of reserves) {
                                 const userState = reserve?.userState || {};
-                                const amount = this._extractNumeric(
-                                    userState?.balance
+                                let amount = this._extractNumeric(
+                                    userState?.supplyBalance?.amount
                                     ?? userState?.supplyBalance
-                                    ?? userState?.aTokenBalance
-                                    ?? userState?.walletBalance
+                                    ?? userState?.balance?.amount
+                                    ?? userState?.balance
+                                    ?? userState?.principalBalance?.amount
+                                    ?? userState?.principalBalance
                                 );
-
-                                if (!amount) {
-                                    continue;
-                                }
 
                                 const reserveAddress = (reserve?.underlyingToken?.address || reserve?.market?.underlyingTokenAddress || '').toLowerCase();
                                 const symbol = (reserve?.underlyingToken?.symbol || reserve?.market?.symbol || reserve?.symbol || '').toUpperCase();
@@ -1355,11 +1398,24 @@ class UnifiedSDK {
                                     ?? null;
 
                                 const usdCandidate = this._extractNumeric(
-                                    userState?.usdValue
+                                    userState?.supplyBalance?.usd
+                                    ?? userState?.usdValue
                                     ?? userState?.balanceUsd
                                     ?? userState?.balanceUSD
                                     ?? userState?.supplyBalanceUsd
                                 );
+
+                                const supplyEntry = reserveAddress && supplyMap.size
+                                    ? supplyMap.get(`${marketAddress}:${reserveAddress}`)
+                                    : undefined;
+
+                                if (supplyEntry && supplyEntry.amount) {
+                                    amount = supplyEntry.amount;
+                                }
+
+                                if (!amount) {
+                                    continue;
+                                }
 
                                 const isStable = this._isStableAsset(
                                     { symbol, address: reserveAddress, chainId },
@@ -1368,18 +1424,27 @@ class UnifiedSDK {
 
                                 let price = null;
                                 let usdValue = usdCandidate;
+                                if (supplyEntry && supplyEntry.usd) {
+                                    usdValue = supplyEntry.usd;
+                                }
 
-                                if (!usdValue) {
-                                    if (isStable) {
-                                        usdValue = amount;
-                                        price = 1;
-                                    } else if (reserveAddress) {
-                                        price = this._resolvePriceOverride({ priceOverrides, symbol, address: reserveAddress })
-                                            ?? await this.priceOracle.getUsdPrice({ chainId, address: reserveAddress, symbol });
-                                        usdValue = amount * price;
+                                if (isStable) {
+                                    price = 1;
+                                    usdValue = amount;
+                                } else {
+                                    if (!usdValue) {
+                                        if (reserveAddress) {
+                                            price = this._resolvePriceOverride({ priceOverrides, symbol, address: reserveAddress })
+                                                ?? await this.priceOracle.getUsdPrice({ chainId, address: reserveAddress, symbol });
+                                            usdValue = amount * price;
+                                        }
+                                    } else {
+                                        price = usdValue / amount;
                                     }
-                                } else if (!isStable) {
-                                    price = usdValue / amount;
+
+                                    if (price == null && usdValue) {
+                                        price = usdValue / amount;
+                                    }
                                 }
 
                                 items.push({
@@ -1435,8 +1500,9 @@ class UnifiedSDK {
                 const decimals = reserve.decimals ?? position.decimals ?? null;
 
                 const amount = this._extractNumeric(
-                    position?.balance
+                    position?.supplyBalance
                     ?? position?.underlyingBalance
+                    ?? position?.balance
                     ?? position?.supplyBalance
                     ?? reserve?.aTokenBalance
                     ?? position
@@ -1461,17 +1527,17 @@ class UnifiedSDK {
                 let price = null;
                 let usdValue = usdCandidate;
 
-                if (!usdValue) {
-                    if (isStable) {
-                        usdValue = amount;
-                        price = 1;
-                    } else {
+                if (isStable) {
+                    price = 1;
+                    usdValue = amount;
+                } else {
+                    if (!usdValue) {
                         price = this._resolvePriceOverride({ priceOverrides, symbol, address })
                             ?? await this.priceOracle.getUsdPrice({ chainId, address, symbol });
                         usdValue = amount * price;
+                    } else {
+                        price = usdValue / amount;
                     }
-                } else if (!isStable) {
-                    price = usdValue / amount;
                 }
 
                 items.push({
