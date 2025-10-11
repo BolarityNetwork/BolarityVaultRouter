@@ -32,3 +32,4 @@ export * as commonConfig from './config/common';
 export * as portfolioConfig from './config/portfolio';
 
 export { buildAaveClient } from './aave/client';
+export * as vaultConfig from './config/vaults';
