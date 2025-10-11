@@ -65,32 +65,67 @@ async function inspectAccount(account: string, chainId: number) {
             console.log('\n-- fetchMarkets returned no markets or errored --');
         } else {
             console.log(`\n-- fetchMarkets returned ${markets.length} markets --`);
+            let printedKeys = false;
             for (const market of markets) {
                 const marketAddress = market?.address || market?.marketAddress;
                 console.log(`\nMarket: ${marketAddress} (${market?.name || 'unknown'})`);
+                if (!printedKeys) {
+                    console.log('Market keys:', Object.keys(market || {}));
+                    printedKeys = true;
+                }
+                if (market?.totalMarketSize) {
+                    console.log('  totalMarketSize:', market.totalMarketSize);
+                }
+                if (market?.totalAvailableLiquidity) {
+                    console.log('  totalAvailableLiquidity:', market.totalAvailableLiquidity);
+                }
+                if (market?.userState) {
+                    console.log('  userState keys:', Object.keys(market.userState || {}));
+                }
                 const reserves = Array.isArray(market?.supplyReserves) ? market.supplyReserves : [];
                 console.log(`Reserves: ${reserves.length}`);
+                if (reserves.length && reserves[0]) {
+                    console.log('Reserve keys:', Object.keys(reserves[0] || {}));
+                }
+                let printedReserve = false;
                 for (const reserve of reserves) {
                     const symbol = reserve?.underlyingToken?.symbol || reserve?.symbol || reserve?.market?.symbol;
                     const reserveAddress = reserve?.underlyingToken?.address || reserve?.market?.underlyingTokenAddress;
                     const userState = reserve?.userState as Record<string, unknown> | undefined;
-                    if (!userState) continue;
 
-                    const supplyBalance = extractNumber(userState['supplyBalance']);
-                    const principalBalance = extractNumber(userState['principalBalance']);
-                    const aTokenBalance = extractNumber(userState['aTokenBalance']);
-                    const walletBalance = extractNumber(userState['walletBalance']);
-                    const balance = extractNumber(userState['balance']);
-                    const balanceUsd = extractNumber(userState['usdValue'] ?? userState['balanceUsd'] ?? userState['balanceUSD']);
+                    const supplyInfo = reserve?.supplyInfo || {};
+                    const totalSupplied = extractNumber(supplyInfo?.totalSupplyBalance);
+                    const totalSuppliedUsd = extractNumber(supplyInfo?.totalSupplyBalanceUSD);
 
-                    if (supplyBalance || principalBalance || aTokenBalance || walletBalance || balance) {
-                        console.log(`  Reserve ${symbol || reserveAddress}:`);
-                        console.log(`    supplyBalance:   ${supplyBalance}`);
-                        console.log(`    principalBalance:${principalBalance}`);
-                        console.log(`    aTokenBalance:   ${aTokenBalance}`);
-                        console.log(`    walletBalance:   ${walletBalance}`);
-                        console.log(`    balance (raw):   ${balance}`);
-                        console.log(`    usdValue:        ${balanceUsd}`);
+                    if (!userState && !totalSupplied && !totalSuppliedUsd) continue;
+
+                    console.log(`  Reserve ${symbol || reserveAddress}:`);
+                    if (!printedReserve) {
+                        console.dir(reserve, { depth: 2 });
+                        printedReserve = true;
+                    }
+                    if (totalSupplied || totalSuppliedUsd) {
+                        console.log(`    totalSupplyBalance:     ${totalSupplied}`);
+                        console.log(`    totalSupplyBalanceUSD:  ${totalSuppliedUsd}`);
+                    }
+
+                    if (userState) {
+                        const supplyBalance = extractNumber(userState['supplyBalance']);
+                        const principalBalance = extractNumber(userState['principalBalance']);
+                        const aTokenBalance = extractNumber(userState['aTokenBalance']);
+                        const walletBalance = extractNumber(userState['walletBalance']);
+                        const balance = extractNumber(userState['balance']);
+                        const balanceUsd = extractNumber(userState['usdValue'] ?? userState['balanceUsd'] ?? userState['balanceUSD']);
+
+                        if (supplyBalance || principalBalance || aTokenBalance || walletBalance || balance) {
+                            console.log('    userState:');
+                            console.log(`      supplyBalance:   ${supplyBalance}`);
+                            console.log(`      principalBalance:${principalBalance}`);
+                            console.log(`      aTokenBalance:   ${aTokenBalance}`);
+                            console.log(`      walletBalance:   ${walletBalance}`);
+                            console.log(`      balance (raw):   ${balance}`);
+                            console.log(`      usdValue:        ${balanceUsd}`);
+                        }
                     }
                 }
             }

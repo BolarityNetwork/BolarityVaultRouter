@@ -10,6 +10,7 @@ export const PORTFOLIO_TOKENS = {
             { symbol: 'DAI', address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', decimals: 18 }
         ],
         assets: [
+            { symbol: 'ETH', isNative: true, decimals: 18, priceAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', priceSymbol: 'WETH' },
             { symbol: 'WETH', address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', decimals: 18 },
             { symbol: 'WBTC', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8 },
             { symbol: 'WSTETH', address: '0x7f39C581F595B53c5cbAd5aBdcBAc420B74A6c6C', decimals: 18 }
@@ -23,6 +24,7 @@ export const PORTFOLIO_TOKENS = {
             { symbol: 'DAI', address: '0xda10009cBd5D07dd0CeCc66161FC93D7c9000da1', decimals: 18 }
         ],
         assets: [
+            { symbol: 'ETH', isNative: true, decimals: 18, priceAddress: '0x4200000000000000000000000000000000000006', priceSymbol: 'WETH' },
             { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
             { symbol: 'WBTC', address: '0x68f180fcCe6836688e9084f035309E29Bf0A2095', decimals: 8 },
             { symbol: 'OP', address: '0x4200000000000000000000000000000000000042', decimals: 18 }
@@ -35,6 +37,7 @@ export const PORTFOLIO_TOKENS = {
             { symbol: 'USDBC', address: '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', decimals: 6 }
         ],
         assets: [
+            { symbol: 'ETH', isNative: true, decimals: 18, priceAddress: '0x4200000000000000000000000000000000000006', priceSymbol: 'WETH' },
             { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
             { symbol: 'CBETH', address: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', decimals: 18 },
             { symbol: 'CBBTC', address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8 },
