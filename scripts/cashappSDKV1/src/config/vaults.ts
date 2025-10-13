@@ -15,6 +15,13 @@
 
 export type VaultCategory = 'flexi' | 'time';
 
+export interface VaultCategoryInfo {
+    id: VaultCategory;
+    name: string;
+    description: string;
+    icon?: string;
+}
+
 export interface VaultReference {
     riskLevel: 'low' | 'medium' | 'high';
     /** Unique identifier for this vault within CashApp */
@@ -63,3 +70,18 @@ export const VAULTS: VaultCatalogue = {
 };
 
 export const VAULT_LIST: VaultReference[] = [...VAULTS.flexi, ...VAULTS.time];
+
+export const VAULT_CATEGORY_INFO: VaultCategoryInfo[] = [
+    {
+        id: 'flexi',
+        name: 'FlexiVault',
+        description: 'Flexible access anytime',
+        icon: ''
+    },
+    {
+        id: 'time',
+        name: 'TimeVault Pro',
+        description: 'Higher returns, fixed term',
+        icon: ''
+    }
+];
