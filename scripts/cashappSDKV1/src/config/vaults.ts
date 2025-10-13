@@ -75,13 +75,13 @@ export const VAULT_CATEGORY_INFO: VaultCategoryInfo[] = [
     {
         id: 'flexi',
         name: 'FlexiVault',
-        description: 'Flexible, liquid vaults backed by Compound and Aave markets.',
+        description: 'Flexible access anytime',
         icon: ''
     },
     {
         id: 'time',
         name: 'TimeVault Pro',
-        description: 'Time-bound Pendle principal strategies targeting fixed-yield maturities.',
+        description: 'Higher returns, fixed term',
         icon: ''
     }
 ];
