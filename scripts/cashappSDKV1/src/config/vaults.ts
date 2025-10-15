@@ -6,7 +6,7 @@
  *
  * Example usage:
  *   import { VAULTS } from './vaults';
- *   const vault = VAULTS.flexi.find(v => v.id === 'cashapp-compound-usdc-base');
+ *   const vault = VAULTS.flexi.find(v => v.id === 'Compound-USDC-Base');
  *   if (vault?.protocol === 'compound') {
  *       const market = compound.COMPOUND_MARKETS[vault.chain].markets[vault.market];
  *       // expose market metadata via RPC or API
@@ -34,6 +34,8 @@ export interface VaultReference {
     market: string;
     /** Optional notes/docs for humans; runtime systems should ignore */
     note?: string;
+    /** Optional icon path (relative to repo root, e.g., assets/logos/...) */
+    icon?: string;
 }
 
 export type VaultCatalogue = Record<VaultCategory, VaultReference[]>;
@@ -41,30 +43,33 @@ export type VaultCatalogue = Record<VaultCategory, VaultReference[]>;
 export const VAULTS: VaultCatalogue = {
     flexi: [
         {
-            id: 'cashapp-compound-usdc-base',
+            id: 'Compound-USDC-Base',
             riskLevel: 'low',
             protocol: 'compound',
             chain: 'base',
             market: 'usdc',
-            note: 'Flexi vault pointing to Base USDC Compound market.'
+            note: 'USDC Compound market on Base',
+            icon: 'assets/logos/compound.png'
         },
         {
-            id: 'cashapp-aave-usdc-base',
+            id: 'Aave-USDC-Base',
             riskLevel: 'low',
             protocol: 'aave',
             chain: 'base',
             market: 'usdc',
-            note: 'Flexi vault pointing to Aave Base USDC reserve.'
+            note: 'USDC Aave market on Base',
+            icon: 'assets/logos/aave.png'
         }
     ],
     time: [
         {
-            id: 'cashapp-pendle-usde-20251211',
+            id: 'Pendle-USDe20251211-Base',
             riskLevel: 'medium',
             protocol: 'pendle',
             chain: 'base',
             market: 'usde-base-20251211',
-            note: 'Time vault referencing Pendle PT USDe Dec 2025 market.'
+            note: 'USDe Base market maturing on 11 Dec 2025',
+            icon: 'assets/logos/pendle.png'
         }
     ]
 };

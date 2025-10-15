@@ -113,7 +113,7 @@ export async function example2_maturityAndAPY() {
 
         for (const amount of amounts) {
             try {
-                const quote = await sdk.getQuote(UNDERLYING_TOKEN, PT_TOKEN, amount, MARKET);
+                const quote = await sdk.getQuote(CHAINS.base.usdc, PT_TOKEN, amount, MARKET);
                 console.log(`\n💰 ${amount} USDC Investment:`);
                 console.log('├─ Expected PT:', quote.amountOut.toFixed(6));
                 console.log('├─ Profit:', quote.profit.toFixed(6), 'PT');

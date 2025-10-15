@@ -194,7 +194,7 @@ console.log('Unified USD', summary.totals.usd);
 
 ## Vault Registry
 
-Vaults are defined in `src/config/vaults.ts` as lightweight references (id, protocol, chain, market, risk level).
+Vaults are defined in `src/config/vaults.ts` as lightweight references (id, protocol, chain, market, risk level) and grouped by categories described in `VAULT_CATEGORY_INFO`.
 
 ```ts
 import { VAULT_LIST } from './config/vaults';
