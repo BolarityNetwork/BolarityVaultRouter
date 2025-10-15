@@ -13,9 +13,6 @@
  *   }
  */
 
-import fs from 'fs';
-import path from 'path';
-
 export type VaultCategory = 'flexi' | 'time';
 
 export interface VaultCategoryInfo {
@@ -37,23 +34,14 @@ export interface VaultReference {
     market: string;
     /** Optional notes/docs for humans; runtime systems should ignore */
     note?: string;
-    /** Optional icon path resolved relative to the package root */
+    /** Optional icon URL for display */
     icon?: string;
 }
 
 export type VaultCatalogue = Record<VaultCategory, VaultReference[]>;
 
-// Resolve icon assets whether we run from source (ts-node) or compiled dist output.
-const ICON_ROOT_CANDIDATES = [
-    path.join(__dirname, '../../assets/logos'),
-    path.join(__dirname, '../../../assets/logos')
-];
-
-const ICON_ROOT =
-    ICON_ROOT_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ??
-    ICON_ROOT_CANDIDATES[0];
-
-const resolveIcon = (fileName: string) => path.join(ICON_ROOT, fileName);
+const ICON_BASE_URL = 'https://files.bolarity.xyz/logos';
+const resolveIcon = (fileName: string) => `${ICON_BASE_URL}/${fileName}`;
 
 export const VAULTS: VaultCatalogue = {
     flexi: [
