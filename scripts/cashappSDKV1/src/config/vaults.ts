@@ -13,6 +13,9 @@
  *   }
  */
 
+import fs from 'fs';
+import path from 'path';
+
 export type VaultCategory = 'flexi' | 'time';
 
 export interface VaultCategoryInfo {
@@ -34,11 +37,23 @@ export interface VaultReference {
     market: string;
     /** Optional notes/docs for humans; runtime systems should ignore */
     note?: string;
-    /** Optional icon path (relative to repo root, e.g., assets/logos/...) */
+    /** Optional icon path resolved relative to the package root */
     icon?: string;
 }
 
 export type VaultCatalogue = Record<VaultCategory, VaultReference[]>;
+
+// Resolve icon assets whether we run from source (ts-node) or compiled dist output.
+const ICON_ROOT_CANDIDATES = [
+    path.join(__dirname, '../../assets/logos'),
+    path.join(__dirname, '../../../assets/logos')
+];
+
+const ICON_ROOT =
+    ICON_ROOT_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ??
+    ICON_ROOT_CANDIDATES[0];
+
+const resolveIcon = (fileName: string) => path.join(ICON_ROOT, fileName);
 
 export const VAULTS: VaultCatalogue = {
     flexi: [
@@ -49,7 +64,7 @@ export const VAULTS: VaultCatalogue = {
             chain: 'base',
             market: 'usdc',
             note: 'USDC Compound market on Base',
-            icon: 'assets/logos/compound.png'
+            icon: resolveIcon('compound.png')
         },
         {
             id: 'Aave-USDC-Base',
@@ -58,7 +73,7 @@ export const VAULTS: VaultCatalogue = {
             chain: 'base',
             market: 'usdc',
             note: 'USDC Aave market on Base',
-            icon: 'assets/logos/aave.png'
+            icon: resolveIcon('aave.png')
         }
     ],
     time: [
@@ -69,7 +84,7 @@ export const VAULTS: VaultCatalogue = {
             chain: 'base',
             market: 'usde-base-20251211',
             note: 'USDe Base market maturing on 11 Dec 2025',
-            icon: 'assets/logos/pendle.png'
+            icon: resolveIcon('pendle.png')
         }
     ]
 };
