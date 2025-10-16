@@ -84,12 +84,12 @@ export const VAULT_CATEGORY_INFO: VaultCategoryInfo[] = [
         id: 'flexi',
         name: 'FlexiVault',
         description: 'Flexible access anytime',
-        icon: ''
+        icon: resolveIcon('flexi.png')
     },
     {
         id: 'time',
         name: 'TimeVault Pro',
         description: 'Higher returns, fixed term',
-        icon: ''
+        icon: resolveIcon('time.png')
     }
 ];
