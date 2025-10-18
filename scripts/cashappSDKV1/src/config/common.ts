@@ -13,7 +13,8 @@ export const DEFAULT_RPCS: Record<number, string> = {
 const DEFAULT_ROUTER_EXCLUSIONS = [
     '0xd4F480965D2347d421F1bEC7F545682E5Ec2151D', // Pendle Router (Base)
     '0x888888888889758F76e7103c6CbF23ABbF58F946', // Pendle Reward Distributor
-    '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5'  // Aave Base Pool Configurator / Router
+    '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5',  // Aave Base Pool Configurator / Router
+    '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB'  // Aave aBas USDC
 ];
 
 const collectCompoundCometAddresses = () => {
