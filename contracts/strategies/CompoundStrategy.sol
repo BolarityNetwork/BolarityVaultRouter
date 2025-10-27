@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import "../interfaces/IStrategy.sol";
+import "../interfaces/IComet.sol";
+import "../interfaces/IBolarityVault.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+/**
+ * @title CompoundStrategy
+ * @notice Strategy for Compound V3 (Comet) protocol integration
+ * @dev This contract is designed to be used via delegatecall from a vault
+ * When used via delegatecall, the comet address must be passed through calldata
+ * Storage configuration is only used for direct calls and view functions
+ */
+contract CompoundStrategy is IStrategy, Ownable {
+    using SafeERC20 for IERC20;
+    
+    // Mapping from asset (base token) to Comet contract address
+    mapping(address => address) public cometMarkets;
+    
+    // Array to track all supported assets
+    address[] public supportedAssets;
+    mapping(address => bool) public isAssetSupported;
+    
+    // Events
+    event CometMarketSet(address indexed asset, address indexed comet);
+    event CometMarketRemoved(address indexed asset);
+    
+    /**
+     * @notice Constructor
+     * @dev Sets msg.sender as the owner who can manage Comet markets
+     */
+    constructor() Ownable(msg.sender) {}
+    
+    /**
+     * @notice Set or update a Comet market for an asset
+     * @param asset The base token address
+     * @param comet The Comet contract address for this asset
+     */
+    function setCometMarket(address asset, address comet) external onlyOwner {
+        require(asset != address(0), "CompoundStrategy: Invalid asset");
+        require(comet != address(0), "CompoundStrategy: Invalid comet");
+        
+        // Verify the Comet's base token matches
+        require(IComet(comet).baseToken() == asset, "CompoundStrategy: Asset mismatch");
+        
+        // If this is a new asset, add to supported assets array
+        if (!isAssetSupported[asset]) {
+            supportedAssets.push(asset);
+            isAssetSupported[asset] = true;
+        }
+        
+        cometMarkets[asset] = comet;
+        emit CometMarketSet(asset, comet);
+    }
+    
+    /**
+     * @notice Remove a Comet market for an asset
+     * @param asset The base token address to remove
+     */
+    function removeCometMarket(address asset) external onlyOwner {
+        require(isAssetSupported[asset], "CompoundStrategy: Asset not supported");
+        
+        // Remove from mapping
+        delete cometMarkets[asset];
+        isAssetSupported[asset] = false;
+        
+        // Remove from array
+        for (uint256 i = 0; i < supportedAssets.length; i++) {
+            if (supportedAssets[i] == asset) {
+                // Move last element to this position and pop
+                supportedAssets[i] = supportedAssets[supportedAssets.length - 1];
+                supportedAssets.pop();
+                break;
+            }
+        }
+        
+        emit CometMarketRemoved(asset);
+    }
+    
+    /**
+     * @notice Batch set multiple Comet markets
+     * @param assets Array of asset addresses
+     * @param comets Array of corresponding Comet addresses
+     */
+    function batchSetCometMarkets(
+        address[] calldata assets,
+        address[] calldata comets
+    ) external onlyOwner {
+        require(assets.length == comets.length, "CompoundStrategy: Length mismatch");
+        
+        for (uint256 i = 0; i < assets.length; i++) {
+            require(assets[i] != address(0), "CompoundStrategy: Invalid asset");
+            require(comets[i] != address(0), "CompoundStrategy: Invalid comet");
+            
+            // Verify the Comet's base token matches
+            require(IComet(comets[i]).baseToken() == assets[i], "CompoundStrategy: Asset mismatch");
+            
+            // If this is a new asset, add to supported assets array
+            if (!isAssetSupported[assets[i]]) {
+                supportedAssets.push(assets[i]);
+                isAssetSupported[assets[i]] = true;
+            }
+            
+            cometMarkets[assets[i]] = comets[i];
+            emit CometMarketSet(assets[i], comets[i]);
+        }
+    }
+    
+    /**
+     * @notice Get the Comet address for a given asset
+     * @param asset The base token address
+     * @return The Comet contract address
+     */
+    function getCometForAsset(address asset) public view returns (address) {
+        address comet = cometMarkets[asset];
+        require(comet != address(0), "CompoundStrategy: Unsupported asset");
+        return comet;
+    }
+    
+    /**
+     * @notice Internal function to get Comet address from calldata or strategy storage
+     * @param asset The asset address
+     * @param data The calldata that may contain the comet address
+     * @return comet The Comet address
+     */
+    function _getCometAddress(address asset, bytes calldata data) internal view returns (address comet) {
+        // First, try to get comet from calldata if provided
+        if (data.length >= 32) {
+            address providedComet = abi.decode(data, (address));
+            if (providedComet != address(0)) {
+                // Verify the Comet's base token matches
+                require(IComet(providedComet).baseToken() == asset, "CompoundStrategy: Asset mismatch");
+                return providedComet;
+            }
+        }
+        
+        // If not in calldata, try to read from strategy's storage via staticcall
+        // This is needed when the contract is called via delegatecall
+        address strategyAddress;
+        assembly {
+            // Strategy is at storage slot 8 in BolarityVault
+            strategyAddress := sload(8)
+        }
+        
+        // If strategy address is valid, make staticcall to get comet
+        if (strategyAddress != address(0)) {
+            (bool success, bytes memory returnData) = strategyAddress.staticcall(
+                abi.encodeWithSelector(this.cometMarkets.selector, asset)
+            );
+            
+            if (success && returnData.length >= 32) {
+                comet = abi.decode(returnData, (address));
+                if (comet != address(0)) {
+                    return comet;
+                }
+            }
+            
+            // Check if this asset is not configured in the strategy
+            (bool isSupported, bytes memory supportedData) = strategyAddress.staticcall(
+                abi.encodeWithSelector(this.isAssetSupported.selector, asset)
+            );
+            
+            // If we can determine the asset isn't supported, give a more specific error
+            if (isSupported && supportedData.length >= 32) {
+                bool assetSupported = abi.decode(supportedData, (bool));
+                if (!assetSupported) {
+                    revert("CompoundStrategy: Comet not configured for asset");
+                }
+            }
+        }
+        
+        // If still not found, revert
+        revert("CompoundStrategy: Comet address must be provided in calldata for delegatecall");
+    }
+    
+    /**
+     * @notice Get all supported assets
+     * @return Array of supported asset addresses
+     */
+    function getSupportedAssets() external view returns (address[] memory) {
+        return supportedAssets;
+    }
+    
+    /**
+     * @notice Get count of supported assets
+     * @return Number of supported assets
+     */
+    function getSupportedAssetsCount() external view returns (uint256) {
+        return supportedAssets.length;
+    }
+
+    /**
+     * @notice Invest assets into Compound V3 (delegatecall from vault)
+     * @param asset The asset to invest  
+     * @param amountIn The amount to invest
+     * @param data Must contain the comet address when called via delegatecall
+     * @return accounted The amount accounted for (same as input for Compound V3)
+     * @return entryGain No entry gain for Compound V3
+     */
+    function investDelegate(
+        address asset,
+        uint256 amountIn,
+        bytes calldata data
+    ) external override returns (uint256 accounted, uint256 entryGain) {
+        if (amountIn == 0) {
+            return (0, 0);
+        }
+        
+        // Get the comet address (from calldata or strategy storage)
+        address comet = _getCometAddress(asset, data);
+        
+        // Approve and supply to Comet
+        // In delegatecall context, this = vault
+        IERC20(asset).safeIncreaseAllowance(comet, amountIn);
+        IComet(comet).supply(asset, amountIn);
+        
+        // For Compound V3, there's no immediate entry gain
+        return (amountIn, 0);
+    }
+
+    /**
+     * @notice Withdraw assets from Compound V3 (delegatecall from vault)
+     * @param asset The asset to withdraw
+     * @param amountOut The amount to withdraw
+     * @param data Must contain the comet address when called via delegatecall
+     * @return accountedOut The amount withdrawn
+     * @return exitGain No exit gain for Compound V3
+     */
+    function divestDelegate(
+        address asset,
+        uint256 amountOut,
+        bytes calldata data
+    ) external override returns (uint256 accountedOut, uint256 exitGain) {
+        if (amountOut == 0) {
+            return (0, 0);
+        }
+        
+        // Get the comet address (from calldata or strategy storage)
+        address comet = _getCometAddress(asset, data);
+        
+        // Withdraw from Compound V3
+        // In delegatecall context, this = vault
+        IComet(comet).withdraw(asset, amountOut);
+        
+        // For Compound V3, there's no exit gain fee
+        return (amountOut, 0);
+    }
+
+    /**
+     * @notice Get total underlying assets for a vault in Compound V3
+     * @param vault The vault address
+     * @return The total underlying assets (Comet balance)
+     */
+    function totalUnderlying(address vault) external view override returns (uint256) {
+        // Get the vault's asset directly
+        address asset = IBolarityVault(vault).asset();
+        
+        // Get Comet for this asset
+        address comet = cometMarkets[asset];
+        if (comet == address(0)) {
+            return 0;
+        }
+        
+        // Return the vault's balance in Comet
+        return IComet(comet).balanceOf(vault);
+    }
+    
+    /**
+     * @notice Preview investment without executing (view function)
+     * @param amountIn The amount to invest
+     * @return accounted The amount that would be accounted for
+     * @return entryGain The entry gain (0 for Compound V3)
+     */
+    function previewInvest(
+        address /* asset */,
+        uint256 amountIn
+    ) external pure override returns (uint256 accounted, uint256 entryGain) {
+        // For Compound V3, supplying base tokens is a 1:1 operation
+        // The protocol tracks your deposited balance and yields accumulate over time
+        // There's no immediate entry gain at deposit time
+        // Therefore: accounted = amountIn, entryGain = 0
+        return (amountIn, 0);
+    }
+}
