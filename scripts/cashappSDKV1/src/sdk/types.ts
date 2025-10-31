@@ -185,13 +185,20 @@ export interface NetTransferBatchResult {
 }
 
 export interface TokenTransfer {
+    txHash: string,
+    type: string,
+    status:string,
+    timestamp: number,
+    blockNumber?:number,
+    tokenSymbol:string,
+    tokenAddress: string,
+    tokenDecimals: number,
+    amount: string,
+    usdValue?:number,
     from: string,
     to: string,
-    contractAddress: string,
-    input: boolean,
-    value: string,
-    decimal: number,
-    timestamp: number,
+    chainId: number,
+    chainName?:string,
 }
 
 export interface FecthTokenTransferArgs {

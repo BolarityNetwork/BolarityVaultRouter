@@ -1187,14 +1187,33 @@ export class UnifiedSDK {
                                 if(token.address.toLowerCase() != tx.contractAddress.toLowerCase()) {
                                     continue;
                                 }
+                                let type = "";
+                                if(tx.methodId == "0xa9059cbb") {
+                                    if(tx.to == userAddress) {
+                                        type = "receive"
+                                    } else {
+                                        type = "transfer"
+                                    }
+                                } else {
+                                    if(tx.to == userAddress) {
+                                        type = "withdraw"
+                                    } else {
+                                        type = "deposit"
+                                    }
+                                }
                                 transfers.push({
+                                    txHash: tx.hash,
+                                    type: type,
+                                    status:"success",
+                                    timestamp: Number(tx.timeStamp),
+                                    blockNumber?:Number(tx.blockNumber),
+                                    tokenSymbol:tx.tokenSymbol,
+                                    tokenAddress: tx.contractAddress,
+                                    tokenDecimals: Number(tx.tokenDecimal),
+                                    amount: String(tx.value),
                                     from: tx.from,
                                     to: tx.to,
-                                    contractAddress: tx.contractAddress,
-                                    input: tx.to==userAddress,
-                                    value: String(tx.value),
-                                    decimal: Number(tx.tokenDecimal),
-                                    timestamp: Number(tx.timeStamp),
+                                    chainId,
                                 });
                             }
                         }
