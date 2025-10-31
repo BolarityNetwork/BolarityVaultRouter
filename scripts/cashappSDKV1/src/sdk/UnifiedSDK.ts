@@ -22,6 +22,8 @@ import { CompoundSDK } from './CompoundSDK';
 import { PendleSDK } from './PendleSDK';
 import { DEFAULT_RPCS, DEFAULT_TRANSFER_EXCLUSIONS } from '../config/common';
 import { PORTFOLIO_TOKENS } from '../config/portfolio';
+import axios from 'axios';
+import { TokenTransfer } from './types';
 
 const DEFAULT_STABLECOIN_SYMBOLS = new Set<string>([
     'USDC', 'USDT', 'DAI', 'USDBC', 'USDP', 'USDS', 'PAX', 'BUSD', 'TUSD',
@@ -122,6 +124,7 @@ export class UnifiedSDK {
     globalStableSymbols: Set<string>;
     globalStableAddresses: Map<number, Set<string>>;
     transferExclusions: any;
+    timestampToBlock: Map<number, number>;
 
     constructor(config: any = {}) {
         this.defaultChainId = config.chainId ?? null;
@@ -138,6 +141,7 @@ export class UnifiedSDK {
         this.portfolioTokens = config.portfolioTokens || PORTFOLIO_TOKENS || {};
         this.rpcUrls = { ...DEFAULT_RPCS, ...(config.rpcUrls || {}) };
         this._providerCache = new Map();
+        this.timestampToBlock = new Map();
 
         this.globalStableSymbols = new Set(DEFAULT_STABLECOIN_SYMBOLS);
         if (Array.isArray(config.extraStableSymbols)) {
@@ -321,6 +325,7 @@ export class UnifiedSDK {
 
         const walletUsd = wallet?.totals?.usd || 0;
         const grandTotal = depositsUsd + walletUsd;
+        const stableUsd = depositsUsd + wallet?.totals?.stableUsd || 0;
 
         if (Array.isArray(wallet?.failures)) {
             for (const entry of wallet.failures) {
@@ -335,7 +340,8 @@ export class UnifiedSDK {
             totals: {
                 usd: grandTotal,
                 depositsUsd,
-                walletUsd
+                walletUsd,
+                stableUsd
             },
             protocols: responses,
             wallet,
@@ -475,13 +481,22 @@ export class UnifiedSDK {
         }
 
         const exclusionSet = this._getTransferExclusionSet(resolvedChainId, excludeAddresses);
-        const fromBlock = await this._findBlockByTimestamp(provider, startSeconds, { preference: 'floor' });
-        const toBlock = await this._findBlockByTimestamp(provider, endSeconds, { preference: 'ceil' });
+        let  fromBlock = this.timestampToBlock.get(startSeconds);
+        console.log("from block:" + fromBlock);
+        if(fromBlock == 0 || fromBlock == undefined) {
+            fromBlock = await this._findBlockByTimestamp(resolvedChainId, startSeconds, { preference: 'floor' });
+            this.timestampToBlock.set(startSeconds, fromBlock);
+        }
+        let  toBlock = this.timestampToBlock.get(endSeconds);
+        console.log("to block:" + toBlock);
+        if(toBlock == 0 || toBlock == undefined) {
+            toBlock = await this._findBlockByTimestamp(resolvedChainId, endSeconds, { preference: 'ceil' });
+            this.timestampToBlock.set(endSeconds, toBlock);
+        }
 
         if (toBlock < fromBlock) {
             throw new Error('Unable to resolve block range for requested timestamps');
         }
-
         const accountSummaries = new Map();
         for (const entry of accountInfo.ordered) {
             accountSummaries.set(entry.normalized, {
@@ -498,8 +513,9 @@ export class UnifiedSDK {
 
         for (const token of tokenConfigs) {
             const logs = await this._collectTransferLogs({
-                provider,
+                chainId: resolvedChainId,
                 tokenAddress: token.address,
+                userAddress: Array.from(accountSet)[0],
                 fromBlock,
                 toBlock,
                 maxBlockSpan: blockSpanLimit
@@ -510,7 +526,8 @@ export class UnifiedSDK {
             for (const log of logs) {
                 if (!log?.topics || log.topics.length < 3) continue;
 
-                const timestamp = await this._getBlockTimestamp(provider, log.blockNumber, blockTimestampCache);
+                // const timestamp = await this._getBlockTimestamp(provider, log.blockNumber, blockTimestampCache);
+                const timestamp = parseInt(log.timeStamp, 16);
                 if (timestamp == null || timestamp < startSeconds || timestamp >= endSeconds) {
                     continue;
                 }
@@ -603,6 +620,68 @@ export class UnifiedSDK {
         };
     }
 
+   async _fetchTokenTransfers({
+        chainId,
+        userAddress,
+        startTime,
+        endTime,
+        options = {},
+    } = {}, page, size) {
+        const resolvedChainId = chainId ?? this.defaultChainId;
+        if (!resolvedChainId) {
+            throw new Error('chainId is required');
+        }
+
+        const provider = this._getRpcProvider(resolvedChainId);
+        if (!provider) {
+            throw new Error(`No RPC URL configured for chain ${resolvedChainId}`);
+        }
+
+        const tokenConfigs = await this._resolveTransferTokens({
+            chainId: resolvedChainId,
+            tokens: this.portfolioTokens?.[chainId]?.assets,
+            provider:provider,
+        });
+
+        if (!tokenConfigs.length) {
+            throw new Error(`No stable tokens available for chain ${resolvedChainId}`);
+        }
+
+        let  fromBlock = 0;
+        let  toBlock = 0;
+
+        if(startTime != 0 && startTime != undefined) {
+            fromBlock = this.timestampToBlock.get(startTime);
+            if(fromBlock == 0 || fromBlock == undefined) {
+                fromBlock = await this._findBlockByTimestamp(resolvedChainId, startTime, { preference: 'floor' });
+                this.timestampToBlock.set(startTime, fromBlock);
+            }
+        }
+
+        if(endTime != 0 && endTime != undefined) {
+            toBlock = this.timestampToBlock.get(endTime);
+            if(toBlock == 0 || toBlock == undefined) {
+                toBlock = await this._findBlockByTimestamp(resolvedChainId, endTime, { preference: 'ceil' });
+                this.timestampToBlock.set(endTime, toBlock);
+            }
+
+            if (toBlock < fromBlock) {
+                throw new Error('Unable to resolve block range for requested timestamps');
+            }
+        }
+
+        let tranfers:TokenTransfer[] = await this._collectTokenTransfers({
+                chainId: resolvedChainId,
+                userAddress,
+                fromBlock,
+                toBlock,
+                page,
+                size,
+                tokenConfigs,
+        });
+        return tranfers;
+    }
+
     _resolveAccount(accountAddress) {
         const account = accountAddress || this.defaultAccount;
         if (!account) {
@@ -687,6 +766,18 @@ export class UnifiedSDK {
         } catch (error) {
             return value.toLowerCase();
         }
+    }
+
+    _addressToTopic(address) {
+        let cleanAddress = address.toLowerCase();
+        if (cleanAddress.startsWith("0x")) {
+            cleanAddress = cleanAddress.slice(2);
+        }
+        if (cleanAddress.length !== 40) {
+            throw new Error("Invalid address length");
+        }
+        const padded = "0".repeat(24) + cleanAddress;
+        return "0x" + padded;
     }
 
     _toChecksumAddress(address) {
@@ -1011,27 +1102,50 @@ export class UnifiedSDK {
         };
     }
 
-    async _collectTransferLogs({ provider, tokenAddress, fromBlock, toBlock, maxBlockSpan = 5000 }) {
+    async _collectTransferLogs({ chainId, tokenAddress, userAddress, fromBlock, toBlock, maxBlockSpan = 5000 }) {
         if (fromBlock > toBlock) {
             return [];
         }
-
+        const address_topic = this._addressToTopic(userAddress);
         const logs = [];
         let span = Math.max(1, Math.floor(maxBlockSpan));
         let start = fromBlock;
 
-        while (start <= toBlock) {
+        while (start < toBlock) {
             const end = Math.min(start + span - 1, toBlock);
             try {
-                const chunk = await provider.getLogs({
-                    address: tokenAddress,
-                    topics: [ERC20_TRANSFER_TOPIC],
-                    fromBlock: start,
-                    toBlock: end
-                });
-                logs.push(...chunk);
-                start = end + 1;
+                // const chunk = await provider.getLogs({
+                //     address: tokenAddress,
+                //     topics: [ERC20_TRANSFER_TOPIC],
+                //     fromBlock: start,
+                //     toBlock: end
+                // });
+                let page = 1;
+                while(true) {
+                    let url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=logs&action=getLogs&fromBlock=${start}&toBlock=${end}&address=${tokenAddress}&topic0=${ERC20_TRANSFER_TOPIC}&topic1=${address_topic}&topic1_2_opr=or&topic2=${address_topic}&page=${page}&offset=1000&apikey=${process.env.API_KEY}`;
+                    const response = await axios.get(url);
+                    const data = response.data || {};
+                    if (typeof data?.result === 'object') {
+                        const chunk = data?.result;
+                        if(chunk != null) {
+                            logs.push(...chunk);
+                            if(chunk.length == 1000 ) {
+                                page += 1;
+                                continue;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            console.log(data);
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                start = end;
             } catch (error) {
+                console.log(error);
                 if (span <= 20) {
                     throw new Error(`Unable to fetch logs for ${tokenAddress} between blocks ${start}-${end}: ${error?.message || error}`);
                 }
@@ -1043,6 +1157,88 @@ export class UnifiedSDK {
         }
 
         return logs;
+    }
+
+    async _collectTokenTransfers({ chainId, userAddress, fromBlock, toBlock, page, size, tokenConfigs }) {
+        if (fromBlock > toBlock) {
+            return [];
+        }
+        const MAX_OFFSET = 10000;
+        const transfers:TokenTransfer[] = [];
+        let curPage = 1;
+        let curOffset = MAX_OFFSET;
+        while(true) {
+            try {
+                let url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=tokentx`
+                if(fromBlock != 0) {
+                    url += `&startblock=${fromBlock}`
+                }
+                if(toBlock != 0) {
+                    url += `&endblock=${toBlock}`
+                }
+                url += `&offset=${curOffset}&apikey=${process.env.API_KEY}&address=${userAddress}&page=${curPage}&sort=desc`;
+                const response = await axios.get(url);
+                const data = response.data || {};
+                if (typeof data?.result === 'object') {
+                    const chunk = data?.result;
+                    if(chunk != null) {
+                        for(const tx of chunk){
+                            for (const token of tokenConfigs) {
+                                if(token.address.toLowerCase() != tx.contractAddress.toLowerCase()) {
+                                    continue;
+                                }
+                                let type = "";
+                                if(tx.methodId == "0xa9059cbb") {
+                                    if(tx.to == userAddress) {
+                                        type = "receive"
+                                    } else {
+                                        type = "transfer"
+                                    }
+                                } else {
+                                    if(tx.to == userAddress) {
+                                        type = "withdraw"
+                                    } else {
+                                        type = "deposit"
+                                    }
+                                }
+                                transfers.push({
+                                    txHash: tx.hash,
+                                    type: type,
+                                    status:"success",
+                                    timestamp: Number(tx.timeStamp),
+                                    blockNumber?:Number(tx.blockNumber),
+                                    tokenSymbol:tx.tokenSymbol,
+                                    tokenAddress: tx.contractAddress,
+                                    tokenDecimals: Number(tx.tokenDecimal),
+                                    amount: String(tx.value),
+                                    from: tx.from,
+                                    to: tx.to,
+                                    chainId,
+                                });
+                            }
+                        }
+                        // Result window is too large, PageNo x Offset size must be less than or equal to 10000
+                        break;
+                        // TODO:If you need to search for values ​​greater than MAX_OFFSET
+                        // if(chunk.length == MAX_OFFSET ) {
+                        //     curPage += 1;
+                        //     continue;
+                        // } else {
+                        //     break;
+                        // }
+                    } else {
+                        console.log(data);
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } catch (error) {
+                throw new Error(`Unable to fetch token transfers between blocks ${fromBlock}-${toBlock}: ${error?.message || error}`);
+            }
+        }
+        const start = (page - 1) * size; // page 从 1 开始
+        return transfers.slice(start, start + size);
     }
 
     async _getBlockTimestamp(provider, blockNumber, cache = new Map()) {
@@ -1057,43 +1253,55 @@ export class UnifiedSDK {
         return block.timestamp;
     }
 
-    async _findBlockByTimestamp(provider, targetTimestamp, { preference = 'floor' } = {}) {
+    async _findBlockByTimestamp(chainId, targetTimestamp, { preference = 'floor' } = {}) {
         if (targetTimestamp == null) {
             throw new Error('targetTimestamp is required');
         }
 
-        const latestNumber = await provider.getBlockNumber();
-        let low = 0;
-        let high = latestNumber;
-        let floorBlock = 0;
-        let ceilBlock = latestNumber;
+        // const latestNumber = await provider.getBlockNumber();
+        // let low = 0;
+        // let high = latestNumber;
+        // let floorBlock = 0;
+        // let ceilBlock = latestNumber;
 
-        while (low <= high) {
-            const mid = Math.floor((low + high) / 2);
-            const block = await provider.getBlock(mid);
-            if (!block) {
-                break;
+        // while (low <= high) {
+        //     const mid = Math.floor((low + high) / 2);
+        //     const block = await provider.getBlock(mid);
+        //     if (!block) {
+        //         break;
+        //     }
+        //     if (block.timestamp === targetTimestamp) {
+        //         return mid;
+        //     }
+        //     if (block.timestamp < targetTimestamp) {
+        //         floorBlock = mid;
+        //         low = mid + 1;
+        //     } else {
+        //         ceilBlock = mid;
+        //         high = mid - 1;
+        //     }
+        // }
+
+        // if (preference === 'ceil') {
+        //     if (ceilBlock == null) {
+        //         return latestNumber;
+        //     }
+        //     return Math.min(Math.max(ceilBlock, floorBlock), latestNumber);
+        // }
+
+        // return Math.max(0, Math.min(floorBlock, latestNumber));
+        let latestNumber = 0;
+        try {
+            const url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=block&action=getblocknobytime&timestamp=${targetTimestamp}&closest=before&apikey=${process.env.API_KEY}`;
+            const response = await axios.get(url);
+            const data = response.data || {};
+            if (typeof data?.result === 'string') {
+                latestNumber = Number(data.result);
             }
-            if (block.timestamp === targetTimestamp) {
-                return mid;
-            }
-            if (block.timestamp < targetTimestamp) {
-                floorBlock = mid;
-                low = mid + 1;
-            } else {
-                ceilBlock = mid;
-                high = mid - 1;
-            }
+        } catch (error) {
+            console.error(`Fetch block number failed:`, (error as Error).message);
         }
-
-        if (preference === 'ceil') {
-            if (ceilBlock == null) {
-                return latestNumber;
-            }
-            return Math.min(Math.max(ceilBlock, floorBlock), latestNumber);
-        }
-
-        return Math.max(0, Math.min(floorBlock, latestNumber));
+        return latestNumber;
     }
 
     _normalizeTransferExclusions(source) {

@@ -183,3 +183,28 @@ export interface NetTransferBatchResult {
     accounts: NetTransferAccountSummary[];
     metadata?: Record<string, unknown>;
 }
+
+export interface TokenTransfer {
+    txHash: string,
+    type: string,
+    status:string,
+    timestamp: number,
+    blockNumber?:number,
+    tokenSymbol:string,
+    tokenAddress: string,
+    tokenDecimals: number,
+    amount: string,
+    usdValue?:number,
+    from: string,
+    to: string,
+    chainId: number,
+    chainName?:string,
+}
+
+export interface FecthTokenTransferArgs {
+    chainId?: number;
+    userAddress?: string;
+    startTime: number | string | Date;
+    endTime?: number | string | Date;
+    options?: Record<string, unknown>;
+}
